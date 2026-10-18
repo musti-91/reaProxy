@@ -271,6 +271,10 @@ function renderGeneral(container) {
         h('div', { class: 'field' }, h('label', null, 'Proxy port'), h('div', { style: { display: 'flex', gap: '6px' } }, port, h('button', { class: 'btn', onclick: async () => { await saveConfig({ port: Number(port.value) }); await refreshState(); toast(S.proxy.running ? `Listening on ${S.proxy.port}` : S.proxy.error); } }, 'Apply'))),
         h('div', { class: 'field' }, h('label', null, 'Max recorded requests'), h('input', { type: 'number', value: c.maxFlows, oninput: debounce((e) => saveConfig({ maxFlows: Number(e.target.value) }), 400) }))),
       h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: c.listenAll, onchange: (e) => saveConfig({ listenAll: e.target.checked }) }), 'Allow connections from other devices on the network (iOS, Android, other computers)'),
+      h('div', { class: 'hint', style: { margin: '-4px 0 12px 22px', color: 'var(--fg-faint)', fontSize: '11px' } }, 'Each new device is refused until you approve it. You’ll be asked the first time it connects.'),
+      h('div', { class: 'row2' },
+        listEditor('Allowed devices', c.allowedClients, (v) => saveConfig({ allowedClients: v }), 'One IP per line. Wildcards OK: 192.168.1.*'),
+        listEditor('Denied devices', c.deniedClients, (v) => saveConfig({ deniedClients: v }), 'Refused silently, without asking.')),
       h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: c.verifyUpstreamTLS, onchange: (e) => saveConfig({ verifyUpstreamTLS: e.target.checked }) }), 'Verify upstream server TLS certificates (turn off for self-signed dev servers)'),
       h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: c.noCache, onchange: (e) => saveConfig({ noCache: e.target.checked }) }), 'No Caching — strip conditional headers so every response is fresh'),
       h('div', { class: 'field', style: { maxWidth: '280px' } }, h('label', null, 'Max captured body size (MB)'), h('input', { type: 'number', value: Math.round(c.maxBodySize / 1048576), oninput: debounce((e) => saveConfig({ maxBodySize: Number(e.target.value) * 1048576 }), 400) })),
@@ -298,7 +302,9 @@ function renderCertificate(container) {
         h('p', null, '2. On the device, open ', h('b', { class: 'mono' }, 'http://rae.proxy'), ' in the browser and download the certificate.'),
         h('p', null, '3. iOS: Settings → General → VPN & Device Management → install. Then Settings → General → About → Certificate Trust Settings → enable full trust.'),
         h('p', null, '4. Android: Settings → Security → Encryption & credentials → Install a certificate → CA certificate. Apps must opt in to user CAs (network_security_config) on Android 7+.'),
-        !S.config.listenAll ? h('p', { class: 'pill-bad' }, 'External connections are disabled — enable them in Settings.') : null),
+        !S.config.listenAll
+          ? h('p', null, h('span', { class: 'pill-bad' }, 'Connections from other devices are off. '), h('span', { class: 'link', onclick: () => toolsModal.show('general') }, 'Turn them on in Settings'), ', then approve the device when Rae asks.')
+          : h('p', null, 'The first time a device connects, Rae asks you to allow it. Approved devices are listed in Settings.')),
       h('div', { class: 'card' },
         h('h4', null, 'Simulators & command line'),
         h('p', null, 'iOS Simulator: drag the exported .pem onto the simulator, or run ', h('code', null, `xcrun simctl keychain booted add-root-cert "${ca.path}"`)),
@@ -407,3 +413,30 @@ function prettyMaybe(text) {
 
 // ---------- device setup (shortcut) ----------
 function openCertificate() { openTools('certificate'); }
+
+// ---------- New device approval ----------
+const clientPrompts = new Set();
+
+function promptClient({ ip }) {
+  if (clientPrompts.has(ip) || (S.config.allowedClients || []).includes(ip) || (S.config.deniedClients || []).includes(ip)) return;
+  clientPrompts.add(ip);
+  let m;
+  const decide = async (key) => {
+    if (key) await saveConfig({ [key]: [...new Set([...(S.config[key] || []), ip])] });
+    m.close();
+  };
+  m = openModal({
+    title: 'Allow this device?',
+    cls: 'small',
+    closeOnOverlay: false,
+    body: h('div', null,
+      h('p', { style: { marginTop: 0, lineHeight: 1.5 } }, h('b', { class: 'mono' }, ip), ' is trying to use Rae Proxy. Its connection was refused.'),
+      h('p', { style: { color: 'var(--fg-dim)', lineHeight: 1.5 } }, 'Allow it only if it’s a device you’re debugging. Once allowed, it can send traffic through this Mac, and you can see that traffic. Reconnect from the device after allowing it.')),
+    foot: [
+      h('button', { class: 'btn', onclick: () => decide(null) }, 'Ask Later'),
+      h('button', { class: 'btn danger', onclick: () => decide('deniedClients') }, 'Deny'),
+      h('button', { class: 'btn primary', onclick: () => decide('allowedClients') }, 'Allow'),
+    ],
+    onClose: () => clientPrompts.delete(ip),
+  });
+}

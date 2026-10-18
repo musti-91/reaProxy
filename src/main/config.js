@@ -1,15 +1,23 @@
 const fs = require('fs');
 const path = require('path');
 
+const CONFIG_VERSION = 2;
+
 const DEFAULTS = {
+  configVersion: CONFIG_VERSION,
   port: 9090,
-  listenAll: true,
+  // Other devices must be explicitly enabled, then each one approved (allowedClients).
+  listenAll: false,
+  allowedClients: [],
+  deniedClients: [],
   recording: true,
   verifyUpstreamTLS: true,
   maxBodySize: 50 * 1024 * 1024,
   maxFlows: 20000,
   noCache: false,
   systemProxy: false,
+  // Network settings captured before Rae changed them; restored on disable.
+  systemProxySnapshot: null,
   pinned: [],
   ssl: {
     interceptAll: true,
@@ -35,13 +43,22 @@ function merge(base, patch) {
   return out;
 }
 
+function migrate(saved) {
+  const v = saved.configVersion || 1;
+  if (v < 2) {
+    // v1 listened on all interfaces by default with no access control.
+    saved = { ...saved, listenAll: false };
+  }
+  return { ...saved, configVersion: CONFIG_VERSION };
+}
+
 class Config {
   constructor(dir) {
     this.file = path.join(dir, 'config.json');
     this.listeners = [];
     let saved = {};
     try { saved = JSON.parse(fs.readFileSync(this.file, 'utf8')); } catch {}
-    this.data = merge(DEFAULTS, saved);
+    this.data = merge(DEFAULTS, migrate(saved));
   }
   get() { return this.data; }
   set(patch) {
@@ -66,4 +83,4 @@ class Config {
   }
 }
 
-module.exports = { Config, DEFAULTS };
+module.exports = { Config, DEFAULTS, migrate };

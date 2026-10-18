@@ -219,8 +219,129 @@ function viaProxy(url, { method = 'GET', body, headers = {} } = {}) {
     assert.ok(r.body.includes('BEGIN CERTIFICATE'));
   });
 
+  // ---------- memory: disk-backed bodies ----------
+  await check('Large bodies are stored on disk, not in RAM', async () => {
+    const big = 'x'.repeat(200 * 1024);
+    const r = await viaProxy(`http://localhost:${hp}/big`, { method: 'POST', body: big, headers: { 'Content-Type': 'text/plain' } });
+    assert.strictEqual(r.status, 200);
+    const f = [...engine.flows.values()].find((x) => x.url.endsWith('/big'));
+    assert.strictEqual(f.reqBodyLength, big.length);
+    assert.strictEqual(f.reqBody.toString(), big, 'body reads back from disk');
+    assert.ok(engine.store.liveBytes >= big.length, 'body lives in the store file');
+    const own = Object.getOwnPropertyDescriptor(f, 'reqBody');
+    assert.ok(own.get && !('value' in own), 'flow holds an accessor, not a Buffer');
+  });
+
+  await check('Deleting flows releases disk space; compaction rewrites live bodies', async () => {
+    const { BodyStore } = require('../src/main/proxy/body-store');
+    const st = new BodyStore(path.join(tmp, 'c.bin'), { inlineMax: 4, compactMinBytes: 1 });
+    const a = st.put(Buffer.from('aaaaaaaaaa'));
+    const b = st.put(Buffer.from('bbbbbbbbbb'));
+    const small = st.put(Buffer.from('hi'));
+    assert.ok(Buffer.isBuffer(small), 'small bodies stay inline');
+    st.release(a);
+    assert.strictEqual(st.liveBytes, 10);
+    assert.ok(st.maybeCompact(), 'compacts when mostly dead');
+    assert.strictEqual(st.diskBytes, 10);
+    assert.strictEqual(st.get(b).toString(), 'bbbbbbbbbb', 'live ref still valid after compaction');
+    st.close();
+
+    const before = engine.store.liveBytes;
+    const ids = [...engine.flows.values()].filter((x) => x.url.endsWith('/big')).map((x) => x.id);
+    engine.deleteFlows(ids);
+    assert.ok(engine.store.liveBytes < before, 'live bytes drop after delete');
+  });
+
+  await check('Imported sessions use the body store', async () => {
+    engine.importFlows([{ method: 'GET', url: 'https://x.test/', reqHeaders: [], resHeaders: [], reqBody: '', resBody: Buffer.from('y'.repeat(20000)).toString('base64'), timing: { start: Date.now() }, tags: [] }]);
+    const f = [...engine.flows.values()].pop();
+    assert.strictEqual(f.resBodyLength, 20000);
+    assert.strictEqual(f.resBody.length, 20000);
+  });
+
+  // ---------- LAN access control ----------
+  await check('Access control: loopback always allowed, LAN needs listenAll + approval', async () => {
+    const { ipListMatches } = require('../src/main/proxy/engine');
+    config.set({ listenAll: false, allowedClients: [], deniedClients: [] });
+    assert.ok(engine.clientAllowed('127.0.0.1'));
+    assert.ok(engine.clientAllowed('::1'));
+    assert.ok(!engine.clientAllowed('192.168.1.5'), 'LAN refused when listenAll is off');
+    config.set({ listenAll: true });
+    assert.ok(!engine.clientAllowed('192.168.1.5'), 'unknown device refused');
+    config.set({ allowedClients: ['192.168.1.*'] });
+    assert.ok(engine.clientAllowed('192.168.1.5'), 'wildcard allow');
+    config.set({ deniedClients: ['192.168.1.5'] });
+    assert.ok(!engine.clientAllowed('192.168.1.5'), 'deny wins over allow');
+    assert.ok(!ipListMatches(['192.168.1.*'], '192.168.10.5'));
+  });
+
+  const lan = engine.addresses()[0];
+  if (lan) {
+    await check(`Real LAN connection (${lan.address}) refused until approved`, async () => {
+      config.set({ listenAll: true, allowedClients: [], deniedClients: [] });
+      await engine.start();
+      const tryGet = () => new Promise((resolve) => {
+        const req = http.request({ host: lan.address, port: PORT, method: 'GET', path: `http://localhost:${hp}/lan`, headers: { Host: `localhost:${hp}` } }, (res) => { res.resume(); resolve(res.statusCode); });
+        req.on('error', () => resolve('refused'));
+        req.end();
+      });
+      const blocked = new Promise((r) => engine.once('client:blocked', r));
+      assert.strictEqual(await tryGet(), 'refused');
+      assert.strictEqual((await blocked).ip, lan.address, 'UI is asked about the device');
+      config.set({ allowedClients: [lan.address] });
+      assert.strictEqual(await tryGet(), 200);
+      config.set({ listenAll: false, allowedClients: [] });
+      await engine.start();
+    });
+  }
+
+  // ---------- system proxy snapshot / restore ----------
+  await check('System proxy: snapshot is restored exactly, others untouched', async () => {
+    const sys = require('../src/main/system');
+    assert.deepStrictEqual(sys.parseBypass("There aren't any bypass domains set on Wi-Fi.\n"), []);
+    assert.deepStrictEqual(sys.parseBypass('*.local\n169.254/16\n'), ['*.local', '169.254/16']);
+    assert.deepStrictEqual(sys.parseProxy('Enabled: Yes\nServer: corp.proxy\nPort: 8080\nAuthenticated Proxy Enabled: 0\n'), { enabled: true, server: 'corp.proxy', port: '8080' });
+
+    const corp = { enabled: true, server: 'corp.proxy', port: '8080' };
+    const none = { enabled: false, server: '', port: '0' };
+    const user = [
+      { service: 'Wi-Fi', web: corp, secure: corp, bypass: ['*.corp.internal'] },
+      { service: 'Ethernet', web: none, secure: none, bypass: [] },
+    ];
+    const snap = sys.buildSnapshot(user, null);
+    const enable = sys.planEnable(snap, 9090);
+    const wifiBypass = enable.find((c) => c[1] === '-setproxybypassdomains' && c[2] === 'Wi-Fi');
+    assert.ok(wifiBypass.includes('*.corp.internal') && wifiBypass.includes('localhost'), 'user bypass list kept and extended');
+
+    const rae = { enabled: true, server: '127.0.0.1', port: '9090' };
+    const nowOn = user.map((u) => ({ ...u, web: rae, secure: rae, bypass: [...u.bypass, 'localhost'] }));
+    // Re-enabling (port change / relaunch) must keep the original snapshot, not capture Rae's settings.
+    assert.deepStrictEqual(sys.buildSnapshot(nowOn, snap), snap);
+    // Without a snapshot, Rae's own settings are never recorded as the user's.
+    assert.strictEqual(sys.buildSnapshot(nowOn, null)[0].web.server, '');
+
+    const restore = sys.planRestore(snap, [...nowOn, { service: 'VPN', web: corp, secure: corp, bypass: [] }]);
+    const s = (c) => c.slice(1).join(' ');
+    const lines = restore.map(s);
+    assert.ok(lines.includes('-setwebproxy Wi-Fi corp.proxy 8080 off'), 'corp proxy restored');
+    assert.ok(lines.includes('-setsecurewebproxy Wi-Fi corp.proxy 8080 off'));
+    assert.ok(!lines.includes('-setwebproxystate Wi-Fi off'), 'enabled proxy not switched off');
+    assert.ok(lines.includes('-setproxybypassdomains Wi-Fi *.corp.internal'), 'bypass restored exactly');
+    assert.ok(lines.includes('-setwebproxystate Ethernet off'));
+    assert.ok(lines.includes('-setproxybypassdomains Ethernet Empty'), 'empty bypass list cleared');
+    assert.ok(!lines.some((l) => l.includes('VPN')), 'service Rae never touched is left alone');
+  });
+
+  await check('Config migration turns off LAN access from v1', async () => {
+    const { migrate, DEFAULTS } = require('../src/main/config');
+    assert.strictEqual(DEFAULTS.listenAll, false);
+    assert.strictEqual(migrate({ listenAll: true }).listenAll, false);
+    assert.strictEqual(migrate({ configVersion: 2, listenAll: true }).listenAll, true, 'later choices are respected');
+  });
+
   for (const r of results) console.log(r.join('  '));
   await engine.stop();
+  engine.store.close();
   plainServer.close();
   secureServer.close();
   process.exit(results.some((r) => r[0] === 'FAIL') ? 1 : 0);

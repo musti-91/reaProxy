@@ -25,23 +25,86 @@ async function services() {
   return out.split('\n').slice(1).map((s) => s.trim()).filter((s) => s && !s.startsWith('*'));
 }
 
+function parseProxy(txt) {
+  const o = {};
+  for (const line of String(txt).split('\n')) {
+    const i = line.indexOf(':');
+    if (i > 0) o[line.slice(0, i).trim()] = line.slice(i + 1).trim();
+  }
+  return { enabled: o.Enabled === 'Yes', server: o.Server || '', port: o.Port || '' };
+}
+
+function parseBypass(txt) {
+  if (/there aren't any bypass domains/i.test(txt)) return [];
+  return String(txt).split('\n').map((l) => l.trim()).filter(Boolean);
+}
+
 async function getProxyState(service) {
-  const parse = (txt) => {
-    const o = {};
-    for (const line of txt.split('\n')) {
-      const i = line.indexOf(':');
-      if (i > 0) o[line.slice(0, i).trim()] = line.slice(i + 1).trim();
-    }
-    return { enabled: o.Enabled === 'Yes', server: o.Server, port: o.Port };
-  };
-  const [web, secure] = await Promise.all([
-    run('networksetup', ['-getwebproxy', service]).then(parse),
-    run('networksetup', ['-getsecurewebproxy', service]).then(parse),
+  const [web, secure, bypass] = await Promise.all([
+    run('networksetup', ['-getwebproxy', service]).then(parseProxy),
+    run('networksetup', ['-getsecurewebproxy', service]).then(parseProxy),
+    run('networksetup', ['-getproxybypassdomains', service]).then(parseBypass),
   ]);
-  return { web, secure };
+  return { service, web, secure, bypass };
+}
+
+const RAE_BYPASS = ['*.local', '169.254/16', '127.0.0.1', 'localhost'];
+const isRae = (p) => p.enabled && p.server === '127.0.0.1';
+
+// Snapshot = the user's settings per service before Rae touched them.
+// Services already in the previous snapshot keep their original entry, so
+// re-enabling (port change, relaunch after a crash) never captures Rae's own settings.
+function buildSnapshot(current, previous) {
+  const prev = new Map((previous || []).map((e) => [e.service, e]));
+  const off = { enabled: false, server: '', port: '' };
+  return current.map((st) => prev.get(st.service) || {
+    ...st,
+    web: isRae(st.web) ? off : st.web,
+    secure: isRae(st.secure) ? off : st.secure,
+  });
+}
+
+function planEnable(snapshot, port) {
+  const cmds = [];
+  for (const { service, bypass } of snapshot) {
+    cmds.push(['networksetup', '-setwebproxy', service, '127.0.0.1', String(port), 'off']);
+    cmds.push(['networksetup', '-setsecurewebproxy', service, '127.0.0.1', String(port), 'off']);
+    cmds.push(['networksetup', '-setproxybypassdomains', service, ...[...new Set([...(bypass || []), ...RAE_BYPASS])]]);
+  }
+  return cmds;
+}
+
+function restoreOne(service, kind, p) {
+  const cmds = [];
+  if (p.server && Number(p.port) > 0) cmds.push(['networksetup', `-set${kind}`, service, p.server, String(p.port), 'off']);
+  if (!p.enabled || !p.server) cmds.push(['networksetup', `-set${kind}state`, service, 'off']);
+  return cmds;
+}
+
+// Restores snapshot entries; services without one are only switched off if they point at Rae.
+function planRestore(snapshot, current) {
+  const snap = new Map((snapshot || []).map((e) => [e.service, e]));
+  const cmds = [];
+  for (const st of current) {
+    const orig = snap.get(st.service);
+    if (orig) {
+      cmds.push(...restoreOne(st.service, 'webproxy', orig.web));
+      cmds.push(...restoreOne(st.service, 'securewebproxy', orig.secure));
+      cmds.push(['networksetup', '-setproxybypassdomains', st.service, ...(orig.bypass.length ? orig.bypass : ['Empty'])]);
+    } else {
+      if (isRae(st.web)) cmds.push(['networksetup', '-setwebproxystate', st.service, 'off']);
+      if (isRae(st.secure)) cmds.push(['networksetup', '-setsecurewebproxystate', st.service, 'off']);
+    }
+  }
+  return cmds;
+}
+
+async function currentStates() {
+  return Promise.all((await services()).map(getProxyState));
 }
 
 async function applyCommands(cmds) {
+  if (!cmds.length) return;
   try {
     for (const c of cmds) await run(c[0], c.slice(1));
   } catch {
@@ -49,32 +112,23 @@ async function applyCommands(cmds) {
   }
 }
 
-async function enableSystemProxy(port) {
-  const list = await services();
-  const cmds = [];
-  for (const s of list) {
-    cmds.push(['networksetup', '-setwebproxy', s, '127.0.0.1', String(port), 'off']);
-    cmds.push(['networksetup', '-setsecurewebproxy', s, '127.0.0.1', String(port), 'off']);
-    cmds.push(['networksetup', '-setproxybypassdomains', s, '*.local', '169.254/16', '127.0.0.1', 'localhost']);
-  }
-  await applyCommands(cmds);
+// Returns the snapshot to persist so disable (even after a crash) can restore it.
+// `persist` is called with the snapshot *before* anything changes, so a crash mid-way can still be undone.
+async function enableSystemProxy(port, previousSnapshot, persist) {
+  const snapshot = buildSnapshot(await currentStates(), previousSnapshot);
+  if (persist) persist(snapshot);
+  await applyCommands(planEnable(snapshot, port));
+  return snapshot;
 }
 
-async function disableSystemProxy() {
-  const list = await services();
-  const cmds = [];
-  for (const s of list) {
-    cmds.push(['networksetup', '-setwebproxystate', s, 'off']);
-    cmds.push(['networksetup', '-setsecurewebproxystate', s, 'off']);
-  }
-  await applyCommands(cmds);
+async function disableSystemProxy(snapshot) {
+  await applyCommands(planRestore(snapshot, await currentStates()));
 }
 
 async function isSystemProxyOurs(port) {
   try {
-    for (const s of await services()) {
-      const st = await getProxyState(s);
-      if (st.web.enabled && st.web.server === '127.0.0.1' && st.web.port === String(port)) return true;
+    for (const st of await currentStates()) {
+      if (isRae(st.web) && st.web.port === String(port)) return true;
     }
   } catch {}
   return false;
@@ -100,4 +154,4 @@ async function removeCA(commonName) {
   await run('security', ['delete-certificate', '-c', commonName, keychain]);
 }
 
-module.exports = { enableSystemProxy, disableSystemProxy, isSystemProxyOurs, isCATrusted, installCA, removeCA };
+module.exports = { enableSystemProxy, disableSystemProxy, isSystemProxyOurs, isCATrusted, installCA, removeCA, parseProxy, parseBypass, buildSnapshot, planEnable, planRestore };

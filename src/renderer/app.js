@@ -703,6 +703,7 @@ rae.on('flows:reset', (list) => {
   scheduleRender();
 });
 rae.on('breakpoint:hit', enqueueBreakpoint);
+rae.on('client:blocked', promptClient);
 rae.on('script:log', (entry) => {
   logLine(entry);
   if (entry.level === 'error') $('#console').classList.remove('hidden');
