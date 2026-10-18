@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; script-src 'self'" />
+  <title>Rae Proxy</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="toolbar">
+    <div class="tb-group">
+      <button id="btn-record" class="tb-btn record" title="Start / stop recording (⌘R)"><span class="dot"></span></button>
+      <button id="btn-clear" class="tb-btn" title="Clear session (⌘K)">⌫</button>
+    </div>
+    <div class="tb-title">
+      <div class="app-name">Rae Proxy</div>
+      <div id="proxy-addr" class="sub">Starting…</div>
+    </div>
+    <div class="tb-group right">
+      <button id="btn-sysproxy" class="tb-pill" title="Route this Mac's traffic through Rae Proxy (⇧⌘P)">System Proxy</button>
+      <button id="btn-throttle" class="tb-pill" title="Network conditions (⌥⌘T)">Throttle</button>
+      <button id="btn-breakpoints" class="tb-pill" title="Breakpoints">Breakpoints</button>
+      <button id="btn-scripting" class="tb-pill" title="Scripting">Scripting</button>
+      <button id="btn-compose" class="tb-btn" title="Compose new request (⌘N)">＋</button>
+      <button id="btn-tools" class="tb-btn" title="Tools & settings">⚙︎</button>
+    </div>
+  </header>
+
+  <div id="banner" class="banner hidden"></div>
+
+  <div class="main">
+    <aside id="sidebar" class="sidebar">
+      <input id="sidebar-search" class="sidebar-search" placeholder="Search domains" />
+      <div id="sidebar-list" class="sidebar-list"></div>
+    </aside>
+    <div class="vsplit" data-target="sidebar"></div>
+    <section class="center" id="center">
+      <div class="filterbar">
+        <input id="filter" class="filter" placeholder="Filter URL, method, status…  (⌘F)" spellcheck="false" />
+        <div id="chips" class="chips"></div>
+      </div>
+      <div id="table" class="table">
+        <div class="thead" id="thead"></div>
+        <div class="tbody" id="tbody"><div class="spacer" id="spacer"></div><div class="rows" id="rows"></div></div>
+        <div class="empty" id="empty">
+          <div class="empty-title">No requests yet</div>
+          <div class="empty-sub">Enable <b>System Proxy</b> to capture this Mac's traffic, or point any device or app at <code id="empty-addr">127.0.0.1:9090</code>.</div>
+        </div>
+      </div>
+      <div class="hsplit" id="hsplit"></div>
+      <div id="detail" class="detail">
+        <div class="pane" id="pane-req"></div>
+        <div class="psplit"></div>
+        <div class="pane" id="pane-res"></div>
+      </div>
+    </section>
+  </div>
+
+  <footer class="statusbar">
+    <span id="sb-count">0 requests</span>
+    <span id="sb-filter"></span>
+    <span class="grow"></span>
+    <span id="sb-flags"></span>
+    <span id="sb-cert" class="link"></span>
+    <span id="sb-console" class="link">Console</span>
+  </footer>
+
+  <div id="console" class="console hidden">
+    <div class="console-head"><b>Script Console</b><span class="grow"></span><button class="btn small" id="console-clear">Clear</button><button class="btn small" id="console-close">Close</button></div>
+    <div class="console-body" id="console-body"></div>
+  </div>
+
+  <div id="modal-root"></div>
+
+  <script src="util.js"></script>
+  <script src="viewers.js"></script>
+  <script src="tools.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
