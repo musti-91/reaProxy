@@ -16,7 +16,7 @@ const ca = new CertAuthority(tmp);
 const config = new Config(tmp);
 const PORT = 19090;
 config.set({ port: PORT, listenAll: false, ssl: { interceptAll: true, exclude: [] }, verifyUpstreamTLS: true });
-const engine = new ProxyEngine({ ca, config });
+const engine = new ProxyEngine({ ca, config, extraCA: [ca.caCertPem] });
 
 function handler(req, res) {
   let body = '';
@@ -69,8 +69,6 @@ function viaProxy(url, { method = 'GET', body, headers = {} } = {}) {
   await new Promise((r) => secureServer.listen(0, '127.0.0.1', r));
   const hp = plainServer.address().port;
   const sp = secureServer.address().port;
-  // upstream cert is signed by our CA; trust it for this test via NODE_EXTRA_CA_CERTS-equivalent
-  engine.agents.https.options.ca = [ca.caCertPem];
 
   const st = await engine.start();
   assert.ok(st.running, 'proxy should start: ' + st.error);

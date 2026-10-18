@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, Menu, dialog, shell, nativeTheme, clipboard } = require('electron');
+const { app, BrowserWindow, ipcMain, Menu, dialog, shell, nativeTheme, clipboard, safeStorage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { Config } = require('./config');
@@ -7,6 +7,7 @@ const { ProxyEngine, TEMPLATE } = require('./proxy/engine');
 const { getHeader } = require('./proxy/http-util');
 const system = require('./system');
 const har = require('./har');
+const { AppResolver } = require('./apps');
 
 app.setName('Rae Proxy');
 const dataDir = app.getPath('userData');
@@ -53,6 +54,10 @@ function summarize(f) {
     clientAddr: f.clientAddr,
     graphql: isGraphQL(f),
     wsCount: f.wsMessages ? f.wsMessages.length : 0,
+    httpVersion: f.httpVersion,
+    app: f.app,
+    via: f.via,
+    upstreamProtocol: f.upstreamProtocol,
   };
 }
 
@@ -67,6 +72,8 @@ function detail(f) {
     resBody: f.resBody ? f.resBody.toString('base64') : null,
     timing: f.timing,
     wsMessages: f.wsMessages,
+    resTrailers: f.resTrailers || null,
+    appPath: f.appPath,
   };
 }
 
@@ -101,6 +108,8 @@ async function fullState() {
     systemProxy: systemProxyOn,
     flows: [...engine.flows.values()].map(summarize),
     scriptTemplate: TEMPLATE,
+    appIcons: Object.fromEntries(appIcons),
+    upstreamHasPassword: !!config.get().upstreamProxy.passwordEnc,
     version: app.getVersion(),
     pendingBreakpoints: engine.pendingBreakpoints(),
   };
@@ -221,6 +230,7 @@ function buildMenu() {
         { type: 'separator' },
         { label: 'SSL Proxying List…', accelerator: 'Alt+Cmd+P', click: m('tool:ssl') },
         { label: 'Reverse Proxy…', click: m('tool:reverse') },
+        { label: 'Upstream Proxy…', click: m('tool:upstream') },
       ],
     },
     {
@@ -256,6 +266,33 @@ function buildMenu() {
 }
 
 // ---------- IPC ----------
+// ---------- app icons ----------
+const appIcons = new Map(); // app name -> data URL
+async function loadAppIcon(a) {
+  if (appIcons.has(a.name)) return;
+  appIcons.set(a.name, null);
+  const target = a.bundle || (path.isAbsolute(a.path) ? a.path : null);
+  if (!target) return;
+  try {
+    const icon = await app.getFileIcon(target, { size: 'normal' });
+    appIcons.set(a.name, icon.toDataURL());
+    send('apps:icon', { name: a.name, icon: appIcons.get(a.name) });
+  } catch {}
+}
+
+// ---------- upstream proxy password (encrypted with the macOS Keychain) ----------
+let upstreamPassword = null;
+function getUpstreamPassword() {
+  if (upstreamPassword !== null) return upstreamPassword;
+  const enc = config.get().upstreamProxy.passwordEnc;
+  try {
+    upstreamPassword = enc && safeStorage.isEncryptionAvailable() ? safeStorage.decryptString(Buffer.from(enc, 'base64')) : '';
+  } catch {
+    upstreamPassword = '';
+  }
+  return upstreamPassword;
+}
+
 function registerIpc() {
   const h = (ch, fn) => ipcMain.handle(ch, (_e, ...a) => fn(...a));
 
@@ -354,6 +391,14 @@ function registerIpc() {
     menu.popup({ window: win, callback: () => setTimeout(() => resolve(null), 50) });
   }));
   h('openExternal', (url) => shell.openExternal(url));
+  h('upstream:setPassword', (password) => {
+    if (password && !safeStorage.isEncryptionAvailable()) throw new Error('Encryption is not available on this Mac');
+    const passwordEnc = password ? safeStorage.encryptString(password).toString('base64') : '';
+    config.set({ upstreamProxy: { passwordEnc } });
+    upstreamPassword = password || '';
+    return !!passwordEnc;
+  });
+  h('upstream:detect', () => system.detectUpstreamProxy(config.get().systemProxySnapshot));
 }
 
 function stamp() {
@@ -363,7 +408,15 @@ function stamp() {
 // ---------- boot ----------
 app.whenReady().then(async () => {
   ca = new CertAuthority(path.join(dataDir, 'certificates'));
-  engine = new ProxyEngine({ ca, config, bodyFile: path.join(dataDir, 'session-bodies.bin') });
+  const apps = new AppResolver({ proxyPorts: () => [config.get().port] });
+  engine = new ProxyEngine({
+    ca,
+    config,
+    bodyFile: path.join(dataDir, 'session-bodies.bin'),
+    resolveApp: (port) => apps.resolve(port),
+    getUpstreamPassword,
+  });
+  engine.on('app', loadAppIcon);
   engine.on('flow', queueFlow);
   engine.on('status', (s) => send('proxy:status', { ...s, addresses: engine.addresses() }));
   engine.on('breakpoint', (bp) => {

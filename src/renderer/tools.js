@@ -83,6 +83,7 @@ const NAV = [
   ['allowList', 'Allow List'],
   ['throttle', 'Network Conditions'],
   ['reverse', 'Reverse Proxy'],
+  ['upstream', 'Upstream Proxy'],
   ['certificate', 'Certificate'],
   ['general', 'Settings'],
 ];
@@ -112,7 +113,7 @@ function openTools(section = 'ssl', prefill) {
     drawNav();
     main.replaceChildren();
     if (RULE_TOOLS[key]) renderRuleTool(main, key, pf);
-    else ({ ssl: renderSSL, throttle: renderThrottle, reverse: renderReverse, certificate: renderCertificate, general: renderGeneral })[key](main);
+    else ({ ssl: renderSSL, throttle: renderThrottle, reverse: renderReverse, upstream: renderUpstream, certificate: renderCertificate, general: renderGeneral })[key](main);
   };
   toolsModal.show = show;
   toolsModal.drawNav = drawNav;
@@ -275,6 +276,7 @@ function renderGeneral(container) {
       h('div', { class: 'row2' },
         listEditor('Allowed devices', c.allowedClients, (v) => saveConfig({ allowedClients: v }), 'One IP per line. Wildcards OK: 192.168.1.*'),
         listEditor('Denied devices', c.deniedClients, (v) => saveConfig({ deniedClients: v }), 'Refused silently, without asking.')),
+      h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: c.http2, onchange: (e) => saveConfig({ http2: e.target.checked }) }), 'Enable HTTP/2 — offer it to clients and use it with servers when the client does (needed for gRPC)'),
       h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: c.verifyUpstreamTLS, onchange: (e) => saveConfig({ verifyUpstreamTLS: e.target.checked }) }), 'Verify upstream server TLS certificates (turn off for self-signed dev servers)'),
       h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: c.noCache, onchange: (e) => saveConfig({ noCache: e.target.checked }) }), 'No Caching — strip conditional headers so every response is fresh'),
       h('div', { class: 'field', style: { maxWidth: '280px' } }, h('label', null, 'Max captured body size (MB)'), h('input', { type: 'number', value: Math.round(c.maxBodySize / 1048576), oninput: debounce((e) => saveConfig({ maxBodySize: Number(e.target.value) * 1048576 }), 400) })),
@@ -439,4 +441,53 @@ function promptClient({ ip }) {
     ],
     onClose: () => clientPrompts.delete(ip),
   });
+}
+
+// ---------- Upstream Proxy (Charles: External Proxy) ----------
+function renderUpstream(container) {
+  const up = structuredClone(S.config.upstreamProxy);
+  // passwordEnc is owned by the main process (upstream:setPassword); never write back a stale copy.
+  const save = debounce(() => { const { passwordEnc, ...rest } = up; saveConfig({ upstreamProxy: rest }); }, 300);
+  const body = h('div', { class: 'rule-editor' });
+  const input = (key, attrs = {}) => h('input', { type: 'text', value: up[key] ?? '', spellcheck: false, ...attrs, oninput: (e) => { up[key] = attrs.type === 'number' ? Number(e.target.value) || '' : e.target.value.trim(); save(); } });
+  const field = (label, el, hint) => h('div', { class: 'field' }, h('label', null, label), el, hint ? h('div', { class: 'hint' }, hint) : null);
+
+  const draw = () => {
+    const pw = h('input', { type: 'password', placeholder: S.upstreamHasPassword ? '•••••••• (saved — type to replace)' : 'None', autocomplete: 'off' });
+    const pwSave = async () => {
+      S.upstreamHasPassword = await rae.invoke('upstream:setPassword', pw.value);
+      pw.value = '';
+      toast(S.upstreamHasPassword ? 'Password saved to the Keychain-encrypted store' : 'Password cleared');
+      draw();
+    };
+    body.replaceChildren(...[
+      h('div', { class: 'row2' },
+        field('Proxy host', input('host', { placeholder: 'proxy.company.com' })),
+        field('Port', input('port', { type: 'number', placeholder: '8080' }))),
+      h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: up.sameForHttps !== false, onchange: (e) => { up.sameForHttps = e.target.checked; save(); draw(); } }), 'Use the same proxy for HTTPS'),
+      up.sameForHttps === false ? h('div', { class: 'row2' },
+        field('HTTPS proxy host', input('httpsHost', { placeholder: 'proxy.company.com' })),
+        field('HTTPS port', input('httpsPort', { type: 'number', placeholder: '8080' }))) : null,
+      h('div', { class: 'row2' },
+        field('Username (optional)', input('username', { placeholder: 'None' }), 'Basic authentication. NTLM and Kerberos are not supported.'),
+        field('Password', h('div', { style: { display: 'flex', gap: '6px' } }, pw,
+          h('button', { class: 'btn', onclick: pwSave }, 'Save'),
+          S.upstreamHasPassword ? h('button', { class: 'btn danger', onclick: () => { pw.value = ''; pwSave(); } }, 'Clear') : null),
+          'Encrypted with your macOS Keychain; never written to disk in plain text.')),
+      listEditor('Bypass — connect directly to these hosts', up.bypass, (v) => { up.bypass = v; save(); }, 'One host per line, wildcards OK (*.internal.company.com). localhost, 127.0.0.1 and *.local always go direct.'),
+      h('div', { style: { display: 'flex', gap: '8px' } },
+        h('button', { class: 'btn', onclick: async () => {
+          const found = await rae.invoke('upstream:detect');
+          if (!found) return toast('No proxy is configured in macOS Network settings');
+          Object.assign(up, { host: found.host, port: found.port, sameForHttps: found.sameForHttps, httpsHost: found.httpsHost, httpsPort: found.httpsPort, bypass: [...new Set([...(up.bypass || []), ...found.bypass])] });
+          save();
+          draw();
+          toast(`Imported ${found.host}:${found.port} from ${found.service}`);
+        } }, 'Import from macOS Network Settings')),
+    ].filter(Boolean));
+  };
+  container.append(
+    toolHead('Upstream Proxy', 'Send Rae’s outgoing traffic through another HTTP proxy, for networks that require a company proxy. Applies to HTTP, HTTPS (via CONNECT), HTTP/2, WebSockets and SSL tunnels. Charles calls this “External Proxy”.', up.enabled, (on) => { up.enabled = on; save(); }),
+    body);
+  draw();
 }

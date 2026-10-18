@@ -125,6 +125,26 @@ async function disableSystemProxy(snapshot) {
   await applyCommands(planRestore(snapshot, await currentStates()));
 }
 
+// Finds the proxy macOS was using before Rae (snapshot) or right now, ignoring Rae itself.
+async function detectUpstreamProxy(snapshot) {
+  const states = snapshot && snapshot.length ? snapshot : await currentStates();
+  const usable = (p) => p.enabled && p.server && p.server !== '127.0.0.1' && Number(p.port) > 0;
+  const st = states.find((x) => usable(x.web) || usable(x.secure));
+  if (!st) return null;
+  const web = usable(st.web) ? st.web : st.secure;
+  const secure = usable(st.secure) ? st.secure : web;
+  const same = web.server === secure.server && web.port === secure.port;
+  return {
+    service: st.service,
+    host: web.server,
+    port: Number(web.port),
+    sameForHttps: same,
+    httpsHost: same ? '' : secure.server,
+    httpsPort: same ? '' : Number(secure.port),
+    bypass: (st.bypass || []).filter((b) => !['*.local', '169.254/16', '127.0.0.1', 'localhost'].includes(b)),
+  };
+}
+
 async function isSystemProxyOurs(port) {
   try {
     for (const st of await currentStates()) {
@@ -154,4 +174,4 @@ async function removeCA(commonName) {
   await run('security', ['delete-certificate', '-c', commonName, keychain]);
 }
 
-module.exports = { enableSystemProxy, disableSystemProxy, isSystemProxyOurs, isCATrusted, installCA, removeCA, parseProxy, parseBypass, buildSnapshot, planEnable, planRestore };
+module.exports = { detectUpstreamProxy, enableSystemProxy, disableSystemProxy, isSystemProxyOurs, isCATrusted, installCA, removeCA, parseProxy, parseBypass, buildSnapshot, planEnable, planRestore };

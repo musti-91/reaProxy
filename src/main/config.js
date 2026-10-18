@@ -12,6 +12,20 @@ const DEFAULTS = {
   deniedClients: [],
   recording: true,
   verifyUpstreamTLS: true,
+  // Offer HTTP/2 to clients (ALPN) and use it upstream when the client does.
+  http2: true,
+  // Charles: External Proxy. The password is stored encrypted (passwordEnc), never in plain text.
+  upstreamProxy: {
+    enabled: false,
+    host: '',
+    port: '',
+    sameForHttps: true,
+    httpsHost: '',
+    httpsPort: '',
+    username: '',
+    passwordEnc: '',
+    bypass: [],
+  },
   maxBodySize: 50 * 1024 * 1024,
   maxFlows: 20000,
   noCache: false,

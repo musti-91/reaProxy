@@ -4,9 +4,11 @@ A free HTTP/HTTPS debugging proxy for macOS (Apple Silicon), inspired by Proxyma
 
 ## Features
 
-- **Capture** HTTP, HTTPS (MITM with a local root CA), and WebSocket traffic, including individual WebSocket messages
+- **Capture** HTTP, HTTPS (MITM with a local root CA), HTTP/2 (including gRPC streaming), and WebSocket traffic, including individual WebSocket messages
+- **App names**: see which app on this Mac sent each request (with its icon), or which device's IP address
+- **Upstream Proxy**: send Rae's outgoing traffic through a company proxy, with Basic auth and a bypass list
 - **Inspector**: headers, query, body (JSON tree/pretty, form, XML/HTML, image preview, hex), cookies, Set-Cookie, raw, timing, summary
-- **Filtering**: free text plus `method:POST`, `status:4xx`, `host:api`, and `tag:map-local`, with `-term` to exclude. There are also content-type and status chips, and the sidebar groups by domain and client and supports pinned domains.
+- **Filtering**: free text plus `method:POST`, `status:4xx`, `host:api`, `app:slack`, and `tag:map-local`, with `-term` to exclude. There are also content-type and status chips, and the sidebar groups by domain and by app or device and supports pinned domains.
 - **SSL Proxying**: intercept all domains or use an include/exclude list. Hosts that aren't intercepted still appear as tunnels. Failed TLS handshakes (pinning, untrusted CA) are explained.
 - **Breakpoints**: pause requests and/or responses, then edit the method, URL, status, headers, and body
 - **Map Local**: serve a file or custom content. You can create a rule from any captured response.
@@ -24,7 +26,7 @@ A free HTTP/HTTPS debugging proxy for macOS (Apple Silicon), inspired by Proxyma
 ```bash
 npm install
 npm start          # dev
-npm test           # headless engine tests
+npm test           # headless engine tests (test/smoke.js, test/features.js)
 npm run dist       # builds dist/Rae Proxy-1.0.0-arm64.dmg and dist/mac-arm64/Rae Proxy.app
 ```
 
@@ -54,6 +56,9 @@ If you're coming from Charles, this table shows where each feature lives in Rae 
 | [Network Conditions](#network-conditions) | Proxy → Throttle Settings | `⌥⌘T` toggles it in Rae |
 | [No Caching](#no-caching) | Tools → No Caching | |
 | [Reverse Proxy](#reverse-proxy) | Proxy → Reverse Proxies | |
+| [Upstream Proxy](#upstream-proxy) | Proxy → External Proxy Settings | HTTP proxy with Basic auth and a bypass list; no SOCKS, NTLM or Kerberos |
+| [HTTP/2 & gRPC](#http2--grpc) | HTTP/2 support (Proxy Settings) | On by default; gRPC streams both ways |
+| [Apps & Devices](#apps--devices) | Client address (Overview) | Rae also shows the app name and icon for requests from this Mac |
 | [Compose](#compose) | Compose (toolbar pen icon) | `⌘N` |
 | [Repeat / Edit and Repeat](#repeat--edit-and-repeat) | Repeat / Compose (from a request) | No equivalent of Charles's *Repeat Advanced* (repeat N times with concurrency) |
 | [Copy as cURL](#copy-as-curl) | Copy cURL Request | |
@@ -62,7 +67,7 @@ If you're coming from Charles, this table shows where each feature lives in Rae 
 | [Script Console](#scripting) | — | Shows `console.log` output from scripts |
 | [Settings](#settings) | Proxy → Proxy Settings | Port, external access, upstream TLS checks, limits |
 
-These Charles features have **no Rae Proxy equivalent**: DNS Spoofing (use [Map Remote](#map-remote) instead), External Proxy Settings, Mirror, Auto Save, Access Control, Repeat Advanced, and opening `.chls` files.
+These Charles features have **no Rae Proxy equivalent**: DNS Spoofing (use [Map Remote](#map-remote) instead), SOCKS proxy, Mirror, Auto Save, Access Control, Repeat Advanced, and opening `.chls` files.
 
 ## How to use each feature
 
@@ -89,10 +94,10 @@ export http_proxy=http://127.0.0.1:9090 https_proxy=http://127.0.0.1:9090
 
 ### Request list & sidebar
 
-- Each row shows the ID, URL, method, status, type, time, duration, size and tags (such as `map-local`, `breakpoint`, `script`, `blocked`, `tunnel`).
+- Each row shows the ID, client (app or device), URL, method, status, type, time, duration, size and tags (such as `h2`, `map-local`, `breakpoint`, `script`, `blocked`, `streamed`, `tunnel`).
 - Click a column header to sort; click it again to reverse the order.
 - Select one row with a click, several with `⌘`-click, or a range with `⇧`-click. Use `↑`/`↓` to move, `⌘A` to select all, and `⌫` to delete.
-- The sidebar lists **Domains** (🔓 = decrypted HTTPS, 🔒 = encrypted tunnel, 🌐 = plain HTTP) and, when more than one device is connected, **Clients**. Click an entry to show only its requests; click **All Requests** to reset.
+- The sidebar lists **Apps & Devices** (see [Apps & Devices](#apps--devices)) and **Domains** (🔓 = decrypted HTTPS, 🔒 = encrypted tunnel, 🌐 = plain HTTP). Click an entry to show only its requests; click **All Requests** to reset.
 - Hide the sidebar with `⌘⌥S`. Switch the request/response panes between side-by-side and stacked with `⌘⌥D`. Drag the dividers to resize.
 
 ### Pinned domains
@@ -112,6 +117,8 @@ Press `⌘F` and type in the filter box. Plain words match the URL, method, stat
 | `status:4` or `status:4xx` | 4xx responses |
 | `host:github` | Hosts containing "github" |
 | `tag:map-local` | Requests answered by Map Local |
+| `app:chrome` | Requests sent by an app (or device IP) containing "chrome" |
+| `tag:h2` | Requests that used HTTP/2 |
 | `-analytics` | Everything except URLs containing "analytics" |
 
 The chips next to the box filter by protocol and content type (HTTP, HTTPS, WebSocket, JSON, GraphQL, Form, XML, HTML, JS, CSS, Image, Media, Font) and by status (1xx–5xx, Errors). Click an active chip again to clear it.
@@ -121,7 +128,8 @@ The chips next to the box filter by protocol and content type (HTTP, HTTPS, WebS
 Select a request to see it in the two panes below the list.
 
 - **Request tabs:** Header, Query, Body, Cookies, Raw, Summary. Summary shows the original URL if Map Remote changed it.
-- **Response tabs:** Header, Body, Set-Cookie, Raw, Timing (plus Messages for WebSockets).
+- **Response tabs:** Header, Body, Set-Cookie, Raw, Timing (plus Messages for WebSockets). Header also lists **Trailers** when the server sent them (gRPC's `grpc-status`, for example).
+- **Summary** shows the protocol on both sides (for example `HTTP/2.0 · upstream HTTP/2`), the app or device that sent the request, and the upstream proxy used, if any.
 - On **Body**, choose a view at the right of the tab bar: **Tree** (collapsible JSON), **Pretty**, **Text**, **Form**, **Preview** (images and SVG) or **Hex**.
 - Compressed bodies (gzip, deflate, brotli, zstd) are decompressed for display. The client still receives the original bytes.
 - Right-click a request for **Copy URL**, **Copy Response Body** and **Save Response Body…**.
@@ -290,6 +298,44 @@ Use this for clients that can't be configured to use a proxy.
 
 Reverse proxies listen on `127.0.0.1` only, so other devices can't reach them.
 
+### Upstream Proxy
+
+Use this when your network only allows internet access through a company proxy. Charles calls it *External Proxy*.
+
+1. Open **Proxy → Upstream Proxy…** (or the **Upstream Proxy** page in Tools ⚙︎) and switch it **on**.
+2. Enter the **Proxy host** and **Port**. If HTTPS uses a different proxy, untick **Use the same proxy for HTTPS** and fill in its host and port.
+3. If the proxy needs a login, enter the **Username**, type the **Password** and click **Save**. The password is encrypted with your macOS Keychain and never stored in plain text.
+4. Add hosts that must be reached directly to **Bypass**, one per line (wildcards work: `*.internal.company.com`). `localhost`, `127.0.0.1` and `*.local` always go direct.
+
+Shortcut: **Import from macOS Network Settings** copies the proxy macOS was using before you turned on Rae's System Proxy (or the one it's using now).
+
+Everything Rae sends goes through the upstream proxy: plain HTTP, decrypted HTTPS and HTTP/2 (via `CONNECT`), WebSockets, and tunnels for hosts without SSL Proxying. The request's **Summary** tab shows which proxy was used. If the proxy rejects the login, the request fails with *requires authentication (407)*.
+
+Only HTTP proxies with Basic authentication are supported (no SOCKS, NTLM or Kerberos). Rae refuses to use itself as its upstream proxy, to prevent loops.
+
+### HTTP/2 & gRPC
+
+HTTP/2 is on by default.
+
+- When a client supports HTTP/2, Rae negotiates it. Rae then also uses HTTP/2 to the server, falling back to HTTP/1.1 if the server doesn't support it. Clients that use HTTP/1.1 stay on HTTP/1.1 all the way.
+- HTTP/2 requests are tagged `h2`. The Summary tab shows the protocol on both sides.
+- **gRPC** works, including streaming in both directions: request and response bodies stream through as they arrive, and trailers such as `grpc-status` are passed on. The captured bodies and trailers appear once the call finishes.
+- **Cleartext HTTP/2** (`h2c`, used by local gRPC servers without TLS) is detected automatically.
+- Because gRPC calls stream, Breakpoints, Scripting and Map Local don't apply to them; Block List and Map Remote do.
+
+To turn HTTP/2 off (clients then use HTTP/1.1 through Rae), untick **Settings → Enable HTTP/2**.
+
+### Apps & Devices
+
+Each request's **Client** column shows who sent it:
+
+- **An app on this Mac**, with its icon: Rae looks up which process opened the connection. Helper processes are grouped under their app (Chrome's renderer and network helpers appear as *Google Chrome*). Safari's traffic comes from its networking process and appears as *Safari / WebKit*. Command-line tools show their own name (`curl`, `node`, `python3`).
+- **Another device**: its IP address.
+
+The **Apps & Devices** section of the sidebar lists them with request counts. Click one to show only its requests, or type `app:<name>` in the filter.
+
+The lookup takes about 50 ms. A command-line request that finishes faster than that (a one-off `curl` to a local server, for example) may show no app.
+
 ### Compose
 
 1. Press `⌘N` (**File → New Request…**) or click **＋** in the toolbar.
@@ -326,6 +372,7 @@ Open **Rae Proxy → Settings…** (`⌘,`):
 - **Max recorded requests**: the oldest requests are dropped beyond this number (default 20,000).
 - **Allow connections from other devices**: needed for phones, tablets and other computers. Off by default. Even when on, each new device is refused until you click **Allow** in the prompt that appears the first time it connects.
 - **Allowed devices / Denied devices**: the approved and refused IP addresses, one per line. Wildcards like `192.168.1.*` work. Denied devices are refused without asking.
+- **Enable HTTP/2**: see [HTTP/2 & gRPC](#http2--grpc).
 - **Verify upstream server TLS certificates**: turn this off to debug servers with self-signed certificates.
 - **No Caching**: see [No Caching](#no-caching).
 - **Max captured body size (MB)**: larger bodies are still forwarded in full but stored only up to this size.
@@ -338,9 +385,13 @@ Settings and rules are saved in `~/Library/Application Support/Rae Proxy/config.
 
 ```
 src/main/main.js           Electron main: window, menus, IPC
-src/main/proxy/engine.js   Proxy server, MITM, rule pipeline, WebSocket
+src/main/proxy/engine.js   Proxy server, MITM, rule pipeline, HTTP/2 + gRPC streaming, WebSocket
+src/main/proxy/upstream.js Outbound connections: direct or via an upstream proxy
+src/main/proxy/h2-client.js HTTP/2 client for servers (pooled sessions)
+src/main/proxy/body-store.js Disk-backed storage for captured bodies
 src/main/proxy/ca.js       Root CA + per-host certificates
 src/main/proxy/scripting.js, ws-frames.js, http-util.js
+src/main/apps.js           Which app opened a connection (lsof + ps)
 src/main/system.js         networksetup / security integration
 src/main/har.js            HAR + session formats
 src/renderer/              UI (vanilla JS, no build step)
