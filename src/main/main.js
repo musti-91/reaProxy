@@ -21,7 +21,7 @@ function isGraphQL(f) {
   if (f._gql !== undefined) return f._gql;
   f._gql = false;
   if (/graphql/i.test(f.path)) f._gql = true;
-  else if (f.reqBody && f.reqBody.length && f.reqBody.length < 1e6 && /json/i.test(getHeader(f.reqHeaders, 'content-type') || '')) {
+  else if (f.reqBodyLength && f.reqBodyLength < 1e6 && /json/i.test(getHeader(f.reqHeaders, 'content-type') || '')) {
     const s = f.reqBody.toString('utf8', 0, 200);
     f._gql = /"query"\s*:\s*"\s*(query|mutation|subscription|\{)/.test(s) || /"operationName"/.test(s);
   }
@@ -46,7 +46,7 @@ function summarize(f) {
     tunnel: f.tunnel,
     start: f.timing.start,
     duration: f.timing.end ? f.timing.end - f.timing.start : null,
-    reqSize: f.reqBody ? f.reqBody.length : 0,
+    reqSize: f.reqBodyLength,
     resSize: f.resSize || 0,
     contentType: getHeader(f.resHeaders || [], 'content-type') || '',
     reqContentType: getHeader(f.reqHeaders || [], 'content-type') || '',
@@ -107,8 +107,15 @@ async function fullState() {
 }
 
 async function setSystemProxy(on) {
-  if (on) await system.enableSystemProxy(config.get().port);
-  else await system.disableSystemProxy();
+  if (on) {
+    await system.enableSystemProxy(config.get().port, config.get().systemProxySnapshot, (snapshot) => {
+      config.set({ systemProxySnapshot: snapshot });
+      config.flush();
+    });
+  } else {
+    await system.disableSystemProxy(config.get().systemProxySnapshot);
+    config.set({ systemProxySnapshot: null });
+  }
   systemProxyOn = on;
   config.set({ systemProxy: on });
   send('systemProxy:status', on);
@@ -259,7 +266,7 @@ function registerIpc() {
     if (patch.port !== undefined || patch.listenAll !== undefined) {
       if (prev.port !== next.port || prev.listenAll !== next.listenAll) {
         await engine.start();
-        if (systemProxyOn) await system.enableSystemProxy(next.port).catch(() => {});
+        if (systemProxyOn) await system.enableSystemProxy(next.port, next.systemProxySnapshot).catch(() => {});
       }
     }
     if (patch.reverseProxies) engine.syncReverseProxies();
@@ -267,7 +274,7 @@ function registerIpc() {
     return next;
   });
   h('flows:clear', () => { engine.clear(); return true; });
-  h('flows:delete', (ids) => { for (const id of ids) engine.flows.delete(id); return true; });
+  h('flows:delete', (ids) => { engine.deleteFlows(ids); return true; });
   h('flow:get', (id) => { const f = engine.flows.get(id); return f ? detail(f) : null; });
   h('flow:repeat', (id) => engine.repeat(id));
   h('compose:send', (req) => engine.compose(req));
@@ -356,7 +363,7 @@ function stamp() {
 // ---------- boot ----------
 app.whenReady().then(async () => {
   ca = new CertAuthority(path.join(dataDir, 'certificates'));
-  engine = new ProxyEngine({ ca, config });
+  engine = new ProxyEngine({ ca, config, bodyFile: path.join(dataDir, 'session-bodies.bin') });
   engine.on('flow', queueFlow);
   engine.on('status', (s) => send('proxy:status', { ...s, addresses: engine.addresses() }));
   engine.on('breakpoint', (bp) => {
@@ -364,6 +371,7 @@ app.whenReady().then(async () => {
     if (win) { if (win.isMinimized()) win.restore(); win.focus(); app.dock?.bounce('informational'); }
   });
   engine.on('log', (entry) => send('script:log', entry));
+  engine.on('client:blocked', (c) => send('client:blocked', c));
 
   registerIpc();
   buildMenu();
@@ -373,7 +381,9 @@ app.whenReady().then(async () => {
   // Restore system proxy state (and clean up after a crash that left it pointing at us).
   const cfg = config.get();
   if (cfg.systemProxy && engine.status.running) setSystemProxy(true).catch(() => {});
-  else if (await system.isSystemProxyOurs(cfg.port)) system.disableSystemProxy().catch(() => {});
+  else if (cfg.systemProxySnapshot || (await system.isSystemProxyOurs(cfg.port))) {
+    system.disableSystemProxy(cfg.systemProxySnapshot).then(() => config.set({ systemProxySnapshot: null }), () => {});
+  }
 
   app.on('activate', () => { if (!win) createWindow(); });
 });
@@ -384,11 +394,16 @@ app.on('before-quit', async (e) => {
   if (systemProxyOn) {
     e.preventDefault();
     quitting = true;
-    try { await system.disableSystemProxy(); } catch {}
+    try {
+      await system.disableSystemProxy(config.get().systemProxySnapshot);
+      config.set({ systemProxySnapshot: null });
+    } catch {} // keep the snapshot so the next launch can still restore it
     config.set({ systemProxy: true }); // remember to re-enable next launch
     config.flush();
     app.quit();
   } else config.flush();
 });
+
+app.on('will-quit', () => engine?.store.close());
 
 app.on('window-all-closed', () => app.quit());

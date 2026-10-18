@@ -77,7 +77,9 @@ These Charles features have **no Rae Proxy equivalent**: DNS Spoofing (use [Map 
 1. Click **System Proxy** in the toolbar, or press `⇧⌘P`.
 2. macOS may ask for your password. Rae then routes HTTP and HTTPS for every enabled network service through `127.0.0.1:9090`.
 3. Click it again to turn it off. Rae also turns it off when you quit and turns it back on at the next launch.
-4. If the app crashed while the system proxy was on, Rae removes the stale setting the next time it starts.
+
+Rae saves each network service's proxy settings and bypass list before changing them, and puts them back exactly when you turn System Proxy off. An existing company proxy or custom bypass list survives. Services Rae didn't change are left alone.
+4. If the app crashed while the system proxy was on, Rae restores your saved settings the next time it starts.
 
 Apps that ignore the system proxy (many command-line tools) need it set directly:
 
@@ -156,9 +158,9 @@ You also need to [trust the certificate](#certificate) on the device sending the
 
 **iPhone / iPad**
 
-1. Put the device on the same Wi-Fi network as the Mac. Make sure **Settings → Allow connections from other devices** is on in Rae (it is by default).
+1. Put the device on the same Wi-Fi network as the Mac. In Rae, turn on **Settings → Allow connections from other devices** (it's off by default).
 2. On the device: **Settings → Wi-Fi → (i) → Configure Proxy → Manual**. Enter the Mac's IP address (shown in the Rae toolbar) and port `9090`.
-3. In Safari, open `http://rae.proxy` and tap **Download certificate**.
+3. In Safari, open `http://rae.proxy`. The first attempt fails and Rae asks **Allow this device?** on the Mac. Click **Allow**, reload the page on the device, and tap **Download certificate**.
 4. **Settings → General → VPN & Device Management** → install the profile.
 5. **Settings → General → About → Certificate Trust Settings** → turn on full trust for *Rae Proxy CA*.
 
@@ -322,10 +324,13 @@ Open **Rae Proxy → Settings…** (`⌘,`):
 
 - **Proxy port**: enter a port and click **Apply**. If the system proxy is on, it switches to the new port automatically. If the port is already in use, a red banner offers **Change Port** and **Retry**.
 - **Max recorded requests**: the oldest requests are dropped beyond this number (default 20,000).
-- **Allow connections from other devices**: needed for phones, tablets and other computers.
+- **Allow connections from other devices**: needed for phones, tablets and other computers. Off by default. Even when on, each new device is refused until you click **Allow** in the prompt that appears the first time it connects.
+- **Allowed devices / Denied devices**: the approved and refused IP addresses, one per line. Wildcards like `192.168.1.*` work. Denied devices are refused without asking.
 - **Verify upstream server TLS certificates**: turn this off to debug servers with self-signed certificates.
 - **No Caching**: see [No Caching](#no-caching).
 - **Max captured body size (MB)**: larger bodies are still forwarded in full but stored only up to this size.
+
+Captured bodies larger than 8 KB are kept on disk in `session-bodies.bin` instead of in memory, so long sessions don't use gigabytes of RAM. The file is emptied by **Clear Session**, compacted automatically after many requests are deleted, and removed when you quit.
 
 Settings and rules are saved in `~/Library/Application Support/Rae Proxy/config.json`.
 

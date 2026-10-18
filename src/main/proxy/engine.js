@@ -5,20 +5,24 @@ const net = require('net');
 const tls = require('tls');
 const fs = require('fs');
 const os = require('os');
+const path = require('path');
 const { EventEmitter } = require('events');
 const { hostMatches, findRule, findRules, urlMatches } = require('../match');
 const H = require('./http-util');
 const scripting = require('./scripting');
 const { FrameParser } = require('./ws-frames');
+const { BodyStore, attachBodies } = require('./body-store');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const LOCAL_HOSTS = new Set(['rae.proxy', 'cert.rae.proxy', 'proxy.rae']);
 
 class ProxyEngine extends EventEmitter {
-  constructor({ ca, config }) {
+  constructor({ ca, config, bodyFile }) {
     super();
     this.ca = ca;
     this.config = config;
+    this.store = new BodyStore(bodyFile || path.join(os.tmpdir(), `rae-proxy-bodies-${process.pid}.bin`));
+    this.lastBlockedNotice = new Map();
     this.flows = new Map();
     this.seq = 0;
     this.pending = new Map();
@@ -50,6 +54,11 @@ class ProxyEngine extends EventEmitter {
     server.on('upgrade', (req, socket, head) => this.handleUpgrade(req, socket, head, null));
     server.on('clientError', (err, socket) => socket.destroy());
     server.on('connection', (s) => {
+      const ip = normalizeIP(s.remoteAddress);
+      if (!this.clientAllowed(ip)) {
+        s.destroy();
+        return this.noticeBlockedClient(ip);
+      }
       this.sockets.add(s);
       s.on('close', () => this.sockets.delete(s));
     });
@@ -97,6 +106,23 @@ class ProxyEngine extends EventEmitter {
     }
   }
 
+  // ---------- LAN access control ----------
+  clientAllowed(ip) {
+    if (isLoopback(ip)) return true;
+    const cfg = this.cfg;
+    if (!cfg.listenAll) return false;
+    if (ipListMatches(cfg.deniedClients, ip)) return false;
+    return ipListMatches(cfg.allowedClients, ip);
+  }
+
+  noticeBlockedClient(ip) {
+    if (!this.cfg.listenAll || ipListMatches(this.cfg.deniedClients, ip)) return;
+    const last = this.lastBlockedNotice.get(ip) || 0;
+    if (Date.now() - last < 10000) return;
+    this.lastBlockedNotice.set(ip, Date.now());
+    this.emit('client:blocked', { ip });
+  }
+
   addresses() {
     const out = [];
     for (const [name, list] of Object.entries(os.networkInterfaces())) {
@@ -108,7 +134,7 @@ class ProxyEngine extends EventEmitter {
   // ---------- flow bookkeeping ----------
   createFlow(init) {
     const u = safeURL(init.url);
-    const flow = {
+    const flow = attachBodies({
       id: ++this.seq,
       method: init.method,
       url: init.url,
@@ -120,11 +146,9 @@ class ProxyEngine extends EventEmitter {
       path: u ? u.pathname + u.search : init.url,
       clientAddr: (init.clientAddr || '').replace(/^::ffff:/, ''),
       reqHeaders: init.headers || [],
-      reqBody: init.body || Buffer.alloc(0),
       status: null,
       statusMessage: '',
       resHeaders: [],
-      resBody: null,
       resSize: 0,
       state: 'active',
       error: null,
@@ -134,7 +158,9 @@ class ProxyEngine extends EventEmitter {
       tunnel: !!init.tunnel,
       timing: { start: Date.now(), sent: null, firstByte: null, end: null },
       composed: !!init.composed,
-    };
+    }, this.store);
+    flow.reqBody = init.body || Buffer.alloc(0);
+    flow.resBody = null;
     flow.recorded = this.shouldRecord(flow);
     if (flow.recorded) {
       this.flows.set(flow.id, flow);
@@ -155,7 +181,22 @@ class ProxyEngine extends EventEmitter {
 
   trim() {
     const max = this.cfg.maxFlows || 20000;
-    while (this.flows.size > max) this.flows.delete(this.flows.keys().next().value);
+    if (this.flows.size <= max) return;
+    while (this.flows.size > max) this.dropFlow(this.flows.keys().next().value);
+    this.store.maybeCompact();
+  }
+
+  dropFlow(id) {
+    const f = this.flows.get(id);
+    if (!f) return;
+    this.flows.delete(id);
+    if (f.state === 'done' || f.state === 'error') f.releaseBodies();
+    else f.recorded = false; // in flight: let it finish, but stop tracking it
+  }
+
+  deleteFlows(ids) {
+    for (const id of ids) this.dropFlow(id);
+    this.store.maybeCompact();
   }
 
   touch(flow) {
@@ -167,6 +208,7 @@ class ProxyEngine extends EventEmitter {
     flow.timing.end = Date.now();
     if (flow.state !== 'error') flow.state = 'done';
     this.touch(flow);
+    if (!flow.recorded) flow.releaseBodies();
   }
 
   fail(flow, err, res) {
@@ -174,6 +216,7 @@ class ProxyEngine extends EventEmitter {
     flow.error = err.message || String(err);
     flow.timing.end = Date.now();
     this.touch(flow);
+    if (!flow.recorded) flow.releaseBodies();
     if (res && !res.headersSent && !res.destroyed) {
       const body = Buffer.from(`Rae Proxy error: ${flow.error}\n`);
       try {
@@ -184,7 +227,13 @@ class ProxyEngine extends EventEmitter {
   }
 
   clear() {
+    for (const f of this.flows.values()) f.recorded = false;
     this.flows.clear();
+    this.store.reset();
+  }
+
+  memoryStats() {
+    return { flows: this.flows.size, diskBytes: this.store.diskBytes, liveDiskBytes: this.store.liveBytes };
   }
 
   // ---------- local pages (cert download for devices) ----------
@@ -698,14 +747,15 @@ class ProxyEngine extends EventEmitter {
 
   importFlows(list) {
     for (const f of list) {
-      const flow = {
-        ...f,
+      const { reqBody, resBody, ...rest } = f;
+      const flow = attachBodies({
+        ...rest,
         id: ++this.seq,
-        reqBody: Buffer.from(f.reqBody || '', 'base64'),
-        resBody: f.resBody != null ? Buffer.from(f.resBody, 'base64') : null,
         recorded: true,
         tags: [...(f.tags || []).filter((t) => t !== 'imported'), 'imported'],
-      };
+      }, this.store);
+      flow.reqBody = Buffer.from(reqBody || '', 'base64');
+      flow.resBody = resBody != null ? Buffer.from(resBody, 'base64') : null;
       this.flows.set(flow.id, flow);
     }
     this.trim();
@@ -722,6 +772,24 @@ class ProxyEngine extends EventEmitter {
 }
 
 // ---------- helpers ----------
+function normalizeIP(ip) {
+  return String(ip || '').replace(/^::ffff:/i, '');
+}
+
+function isLoopback(ip) {
+  return ip === '::1' || /^127\./.test(ip);
+}
+
+// Entries are exact IPs or IPv4 wildcards like 192.168.1.*
+function ipListMatches(list, ip) {
+  return (list || []).some((p) => {
+    p = String(p).trim();
+    if (!p) return false;
+    if (!p.includes('*')) return p === ip;
+    return new RegExp('^' + p.replace(/\./g, '\\.').replace(/\*/g, '[0-9a-f:]+') + '$', 'i').test(ip);
+  });
+}
+
 // JS-level duplex around a socket so already-buffered bytes are not bypassed by native consumers.
 function wrapSocket(sock) {
   const { Duplex } = require('stream');
@@ -812,4 +880,4 @@ async function writeThrottled(res, body, kbps) {
   res.end();
 }
 
-module.exports = { ProxyEngine, urlMatches, TEMPLATE: scripting.TEMPLATE };
+module.exports = { ProxyEngine, urlMatches, ipListMatches, TEMPLATE: scripting.TEMPLATE };
