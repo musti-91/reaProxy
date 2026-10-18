@@ -8,7 +8,7 @@
   "license": "MIT",
   "scripts": {
     "start": "electron .",
-    "test": "node test/smoke.js",
+    "test": "node test/smoke.js && node test/features.js",
     "dist": "electron-builder --mac --arm64"
   },
   "dependencies": {

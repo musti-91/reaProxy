@@ -17,7 +17,12 @@ const S = {
   tabs: { req: 'Header', res: 'Body' },
   modes: { req: null, res: null },
   sideSearch: '',
+  appIcons: {},
 };
+
+const isLocalAddr = (a) => !a || a === 'Rae Proxy' || /^(127\.|::1$)/.test(a);
+// Sidebar / filter key for "who sent this": the app on this Mac, or the device's IP.
+const clientKey = (f) => f.app || (isLocalAddr(f.clientAddr) ? null : f.clientAddr);
 
 const ROW_H = 24;
 const KIND_CHIPS = ['All', 'HTTP', 'HTTPS', 'WebSocket', 'JSON', 'GraphQL', 'Form', 'XML', 'HTML', 'JS', 'CSS', 'Image', 'Media', 'Font'];
@@ -25,6 +30,7 @@ const STATUS_CHIPS = ['1xx', '2xx', '3xx', '4xx', '5xx', 'Errors'];
 
 const COLS = [
   { key: 'id', label: '#', get: (f) => f.id },
+  { key: 'client', label: 'Client', get: (f) => clientKey(f) || '' },
   { key: 'url', label: 'URL', get: (f) => f.url },
   { key: 'method', label: 'Method', get: (f) => f.method },
   { key: 'status', label: 'Status', get: (f) => f.status || 0 },
@@ -43,6 +49,8 @@ async function refreshState() {
   S.ca = st.ca;
   S.systemProxy = st.systemProxy;
   S.scriptTemplate = st.scriptTemplate;
+  S.appIcons = st.appIcons || {};
+  S.upstreamHasPassword = st.upstreamHasPassword;
   return st;
 }
 
@@ -57,7 +65,7 @@ async function saveConfig(patch) {
 function matchesFilter(f) {
   const { text, kind, status, side } = S.filter;
   if (side.type === 'host' && f.host !== side.value) return false;
-  if (side.type === 'client' && f.clientAddr !== side.value) return false;
+  if (side.type === 'client' && clientKey(f) !== side.value) return false;
   if (side.type === 'pinned' && !S.config.pinned.includes(f.host)) return false;
   if (kind !== 'All') {
     if (kind === 'HTTP' && (f.scheme !== 'http' || f.ws)) return false;
@@ -69,17 +77,18 @@ function matchesFilter(f) {
     else if (!f.status || String(f.status)[0] !== status[0]) return false;
   }
   if (text) {
-    const hay = `${f.method} ${f.url} ${f.status || ''} ${f.tags.join(' ')} ${f.clientAddr}`.toLowerCase();
+    const hay = `${f.method} ${f.url} ${f.status || ''} ${f.tags.join(' ')} ${f.clientAddr} ${f.app || ''}`.toLowerCase();
     for (const term of text.toLowerCase().split(/\s+/).filter(Boolean)) {
       const neg = term.startsWith('-') && term.length > 1;
       const t = neg ? term.slice(1) : term;
-      const m = t.match(/^(method|status|host|tag):(.+)$/);
+      const m = t.match(/^(method|status|host|tag|app):(.+)$/);
       let hit;
       if (m) {
         const v = m[2];
         hit = m[1] === 'method' ? f.method.toLowerCase() === v
           : m[1] === 'status' ? String(f.status || '').startsWith(v.replace(/x+$/, ''))
           : m[1] === 'host' ? f.host.toLowerCase().includes(v)
+          : m[1] === 'app' ? (clientKey(f) || '').toLowerCase().includes(v)
           : f.tags.some((x) => x.includes(v));
       } else hit = hay.includes(t);
       if (hit === neg) return false;
@@ -138,6 +147,17 @@ function statusCell(f) {
   return `<span class="st ${statusClass(f.status)}">${f.status}</span>`;
 }
 
+function appIconHTML(name) {
+  const icon = name && S.appIcons[name];
+  return icon ? `<img class="app-ic" src="${icon}">` : '';
+}
+
+function clientCell(f) {
+  const key = clientKey(f);
+  if (!key) return '';
+  return `${appIconHTML(f.app)}<span title="${esc(f.app ? f.app : 'Device ' + key)}">${esc(key)}</span>`;
+}
+
 function rowHTML(f) {
   const sel = S.selected.has(f.id);
   let pathPart = f.path;
@@ -145,6 +165,7 @@ function rowHTML(f) {
   const tags = f.tags.filter((t) => t !== 'tunnel').map((t) => `<span class="tag">${esc(t)}</span>`).join('');
   return `<div class="row${sel ? ' sel' : ''}${f.state === 'error' ? ' err' : ''}${f.state === 'paused' ? ' paused' : ''}" data-id="${f.id}">`
     + `<div class="dim">${f.id}</div>`
+    + `<div class="client">${clientCell(f)}</div>`
     + `<div class="url" title="${esc(f.url)}"><span class="host">${esc(f.scheme === 'https' && f.tunnel ? '🔒 ' : '')}${esc(f.ws ? (f.scheme === 'https' ? 'wss' : 'ws') : f.scheme)}://${esc(f.host)}</span>${esc(pathPart)}</div>`
     + `<div class="method">${esc(f.method)}</div>`
     + `<div>${statusCell(f)}</div>`
@@ -277,14 +298,15 @@ function scheduleSidebar() {
 
 function renderSidebar() {
   const hosts = new Map();
-  const clients = new Map();
+  const clients = new Map(); // app name or device IP -> count
   for (const f of S.flows.values()) {
     const e = hosts.get(f.host) || { count: 0, https: false, tunnel: false };
     e.count++;
     if (f.scheme === 'https' && !f.tunnel) e.https = true;
     if (f.tunnel) e.tunnel = true;
     hosts.set(f.host, e);
-    if (f.clientAddr) clients.set(f.clientAddr, (clients.get(f.clientAddr) || 0) + 1);
+    const key = clientKey(f);
+    if (key) clients.set(key, (clients.get(key) || 0) + 1);
   }
   const q = S.sideSearch.toLowerCase();
   const side = S.filter.side;
@@ -301,9 +323,13 @@ function renderSidebar() {
     out.push(h('div', { class: 'sb-section' }, 'Pinned'));
     for (const p of pinned) out.push(item('host', p, p, hosts.get(p)?.count || 0, '📌'));
   }
-  if (clients.size > 1) {
-    out.push(h('div', { class: 'sb-section' }, 'Clients'));
-    for (const [c, n] of [...clients].sort()) if (!q || c.includes(q)) out.push(item('client', c, c === '127.0.0.1' ? 'This Mac' : c, n, '💻'));
+  if (clients.size) {
+    out.push(h('div', { class: 'sb-section' }, 'Apps & Devices'));
+    for (const [c, n] of [...clients].sort((a, b) => a[0].localeCompare(b[0]))) {
+      if (q && !c.toLowerCase().includes(q)) continue;
+      const icon = S.appIcons[c] ? h('img', { class: 'app-ic', src: S.appIcons[c] }) : /^[\d.:a-f]+$/i.test(c) ? '📱' : '⚙︎';
+      out.push(item('client', c, c, n, icon));
+    }
   }
   out.push(h('div', { class: 'sb-section' }, `Domains (${hosts.size})`));
   for (const [host, e] of [...hosts].sort((a, b) => a[0].localeCompare(b[0]))) {
@@ -385,7 +411,8 @@ function renderDetail() {
     switch (S.tabs.res) {
       case 'Messages': resBody = wsView(d); break;
       case 'Header':
-        resBody = h('div', null, h('div', { class: 'kv-section' }, `HTTP/${d.httpVersion} ${d.status} ${d.statusMessage || ''}`), kvTable(d.resHeaders, 'No headers'));
+        resBody = h('div', null, h('div', { class: 'kv-section' }, `HTTP/${d.httpVersion} ${d.status} ${d.statusMessage || ''}`), kvTable(d.resHeaders, 'No headers'),
+          d.resTrailers && d.resTrailers.length ? [h('div', { class: 'kv-section' }, 'Trailers'), kvTable(d.resTrailers)] : null);
         break;
       case 'Body':
         resBody = d.tunnel ? h('div', { class: 'note' }, `Encrypted tunnel — enable SSL Proxying for ${d.host} to see the content.`, h('div', { style: { marginTop: '10px' } }, h('button', { class: 'btn primary', onclick: () => enableSSLFor(d.host) }, `Enable SSL Proxying for ${d.host}`)))
@@ -405,8 +432,10 @@ function summaryView(d) {
     d.originalUrl ? ['Original URL', d.originalUrl] : null,
     ['Method', d.method],
     ['Status', d.status ? `${d.status} ${d.statusMessage || ''}` : d.state],
-    ['Protocol', `${d.scheme.toUpperCase()} · HTTP/${d.httpVersion}${d.ws ? ' · WebSocket' : ''}`],
-    ['Client', d.clientAddr || '—'],
+    ['Protocol', `${d.scheme.toUpperCase()} · HTTP/${d.httpVersion}${d.ws ? ' · WebSocket' : ''}${d.upstreamProtocol ? ` · upstream ${d.upstreamProtocol === 'h2' ? 'HTTP/2' : 'HTTP/1.1'}` : ''}`],
+    ['Client', d.app ? `${d.app}${d.appPath ? ` (${d.appPath})` : ''}` : d.clientAddr || '—'],
+    d.app && d.clientAddr ? ['Client address', d.clientAddr] : null,
+    d.via ? ['Upstream proxy', d.via] : null,
     ['Request size', fmtBytes(b64ToBytes(d.reqBody).length)],
     ['Response size', fmtBytes(d.resSize)],
     ['Started', new Date(d.start).toLocaleString()],
@@ -577,6 +606,8 @@ function updateChrome() {
   const flags = [];
   if (c.throttle.enabled) flags.push(`Throttle ${c.throttle.latency}ms`);
   if (c.noCache) flags.push('No Caching');
+  if (c.upstreamProxy.enabled && c.upstreamProxy.host) flags.push(`Upstream ${c.upstreamProxy.host}:${c.upstreamProxy.port}`);
+  if (!c.http2) flags.push('HTTP/2 off');
   for (const [k, label] of [['breakpoints', 'Breakpoints'], ['mapLocal', 'Map Local'], ['mapRemote', 'Map Remote'], ['scripting', 'Scripts'], ['blockList', 'Block'], ['allowList', 'Allow']]) {
     const n = activeRules(k);
     if (n) flags.push(`${label} ${n}`);
@@ -704,6 +735,11 @@ rae.on('flows:reset', (list) => {
 });
 rae.on('breakpoint:hit', enqueueBreakpoint);
 rae.on('client:blocked', promptClient);
+rae.on('apps:icon', ({ name, icon }) => {
+  S.appIcons[name] = icon;
+  scheduleSidebar();
+  scheduleRender(false);
+});
 rae.on('script:log', (entry) => {
   logLine(entry);
   if (entry.level === 'error') $('#console').classList.remove('hidden');

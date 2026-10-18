@@ -1,6 +1,8 @@
 // HTTP/HTTPS intercepting proxy engine.
 const http = require('http');
 const https = require('https');
+const http2 = require('http2');
+const { PassThrough } = require('stream');
 const net = require('net');
 const tls = require('tls');
 const fs = require('fs');
@@ -12,15 +14,23 @@ const H = require('./http-util');
 const scripting = require('./scripting');
 const { FrameParser } = require('./ws-frames');
 const { BodyStore, attachBodies } = require('./body-store');
+const { Upstream } = require('./upstream');
+const { H2Client } = require('./h2-client');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const LOCAL_HOSTS = new Set(['rae.proxy', 'cert.rae.proxy', 'proxy.rae']);
 
 class ProxyEngine extends EventEmitter {
-  constructor({ ca, config, bodyFile }) {
+  // resolveApp(clientPort) → Promise<{ name, path, bundle } | null> for local clients (optional).
+  // getUpstreamPassword() → decrypted upstream proxy password. extraCA: additional trusted CAs for upstream TLS.
+  constructor({ ca, config, bodyFile, resolveApp, getUpstreamPassword, extraCA }) {
     super();
     this.ca = ca;
     this.config = config;
+    this.resolveApp = resolveApp || null;
+    this.extraCA = extraCA;
+    this.upstreamConn = new Upstream(() => this.config.get(), getUpstreamPassword);
+    this.h2client = new H2Client(this.upstreamConn);
     this.store = new BodyStore(bodyFile || path.join(os.tmpdir(), `rae-proxy-bodies-${process.pid}.bin`));
     this.lastBlockedNotice = new Map();
     this.flows = new Map();
@@ -29,16 +39,22 @@ class ProxyEngine extends EventEmitter {
     this.servers = [];
     this.reverseServers = new Map();
     this.sockets = new Set();
-    this.agents = {
-      http: new http.Agent({ keepAlive: true, maxSockets: 256 }),
-      https: new https.Agent({ keepAlive: true, maxSockets: 256 }),
-    };
     this.status = { running: false, port: null, error: null };
 
     // Inner server receives decrypted (MITM) traffic and plain traffic tunneled via CONNECT.
     this.inner = http.createServer({ keepAlive: true }, (req, res) => this.handleHttp(req, res, req.socket.__target));
     this.inner.on('upgrade', (req, socket, head) => this.handleUpgrade(req, socket, head, req.socket.__target));
     this.inner.on('clientError', (err, socket) => socket.destroy());
+
+    // Same, for clients that negotiated HTTP/2 (ALPN h2, or h2c prior knowledge).
+    // http2 wraps JS sockets internally, so connection metadata is handed over via the
+    // 'session' event, which fires synchronously inside emit('connection').
+    this.h2 = http2.createServer({ settings: { enableConnectProtocol: false } }, (req, res) => this.handleHttp(req, res, req.stream.session.__meta.__target));
+    this.h2.on('sessionError', () => {});
+    this.h2.on('session', (session) => {
+      session.__meta = this.h2Pending;
+      session.on('error', () => {});
+    });
   }
 
   get cfg() {
@@ -61,6 +77,7 @@ class ProxyEngine extends EventEmitter {
       }
       this.sockets.add(s);
       s.on('close', () => this.sockets.delete(s));
+      if (this.resolveApp && isLoopback(ip)) s.__appP = this.resolveApp(s.remotePort).catch(() => null);
     });
     await new Promise((resolve) => {
       server.once('error', (err) => {
@@ -158,9 +175,22 @@ class ProxyEngine extends EventEmitter {
       tunnel: !!init.tunnel,
       timing: { start: Date.now(), sent: null, firstByte: null, end: null },
       composed: !!init.composed,
+      app: null,
+      appPath: null,
+      via: null,
+      upstreamProtocol: null,
     }, this.store);
     flow.reqBody = init.body || Buffer.alloc(0);
     flow.resBody = null;
+    if (init.appP) {
+      init.appP.then((a) => {
+        if (!a) return;
+        flow.app = a.name;
+        flow.appPath = a.bundle || a.path;
+        this.emit('app', a);
+        this.touch(flow);
+      });
+    }
     flow.recorded = this.shouldRecord(flow);
     if (flow.recorded) {
       this.flows.set(flow.id, flow);
@@ -259,13 +289,15 @@ class ProxyEngine extends EventEmitter {
 
   // ---------- plain HTTP / decrypted HTTPS ----------
   async handleHttp(req, res, target) {
+    const h2 = req.httpVersionMajor === 2;
+    const hostHeader = h2 ? req.headers[':authority'] || req.headers.host : req.headers.host;
     let url;
     if (target) {
       const scheme = target.secure ? 'https' : 'http';
       const defPort = target.secure ? 443 : 80;
-      const hostPort = target.reverse || !req.headers.host
+      const hostPort = target.reverse || !hostHeader
         ? `${target.host}${Number(target.port) === defPort ? '' : ':' + target.port}`
-        : req.headers.host;
+        : hostHeader;
       url = `${scheme}://${hostPort}${req.url}`;
     } else if (/^https?:\/\//i.test(req.url)) {
       url = req.url;
@@ -279,20 +311,82 @@ class ProxyEngine extends EventEmitter {
     }
     if (LOCAL_HOSTS.has(u.hostname)) return this.serveLocal(req, res);
 
+    let headers = H.rawToPairs(req.rawHeaders);
+    if (h2) {
+      headers = headers.filter(([k]) => !k.startsWith(':'));
+      if (!H.getHeader(headers, 'host') && hostHeader) headers.unshift(['host', hostHeader]);
+    }
+    if (target && target.reverse) headers = H.setHeader(headers, 'Host', u.host);
+    const conn = h2 ? req.stream.session.__meta : req.socket;
+    const init = { method: req.method, url, httpVersion: req.httpVersion, headers, clientAddr: conn.remoteAddress, appP: conn.__appP };
+
+    // gRPC streams in both directions, so its body can't be buffered first.
+    if (isStreamingRequest(H.getHeader(headers, 'content-type'))) {
+      const flow = this.createFlow(init);
+      if (h2) flow.tags.push('h2');
+      try {
+        await this.exchangeStreaming(flow, req, res);
+      } catch (e) {
+        this.fail(flow, e, res);
+      }
+      return;
+    }
+
     let body;
     try {
       body = await H.readBody(req);
     } catch (e) {
       return res.destroy();
     }
-    let headers = H.rawToPairs(req.rawHeaders);
-    if (target && target.reverse) headers = H.setHeader(headers, 'Host', u.host);
-    const flow = this.createFlow({ method: req.method, url, httpVersion: req.httpVersion, headers, body, clientAddr: req.socket.remoteAddress });
+    const flow = this.createFlow({ ...init, body });
+    if (h2) flow.tags.push('h2');
     try {
       await this.exchange(flow, res);
     } catch (e) {
       this.fail(flow, e, res);
     }
+  }
+
+  // Streaming variant of exchange(): URL rules apply, body tools (breakpoints, scripts, map local) don't.
+  async exchangeStreaming(flow, req, res) {
+    const cfg = this.cfg;
+    let r = { method: flow.method, url: flow.url, headers: flow.reqHeaders };
+    const block = findRule(cfg.blockList, r.method, r.url);
+    if (block) {
+      flow.tags.push('blocked');
+      if (block.action === 'drop') res.destroy();
+      return this.fail(flow, new Error('Blocked by Block List'), block.action === 'drop' ? null : res);
+    }
+    r = this.applyMapRemote(flow, r);
+    this.applyRequest(flow, { ...r, body: Buffer.alloc(0) });
+    flow.tags.push('streamed');
+
+    const captured = [];
+    let size = 0;
+    const body = new PassThrough();
+    req.on('data', (c) => {
+      size += c.length;
+      if (size <= cfg.maxBodySize) captured.push(c);
+    });
+    req.on('end', () => { flow.reqBody = Buffer.concat(captured); this.touch(flow); });
+    req.pipe(body);
+
+    const up = await this.openUpstream(flow, { ...r, body });
+    flow.timing.firstByte = Date.now();
+    res.on('close', () => { if (!res.writableFinished) up.stream.destroy(); });
+    await this.streamThrough(flow, up, res);
+  }
+
+  applyMapRemote(flow, r) {
+    const mr = findRule(this.cfg.mapRemote, r.method, r.url);
+    if (!mr) return r;
+    const to = mapRemoteURL(r.url, mr);
+    if (to === r.url) return r;
+    flow.originalUrl = r.url;
+    flow.tags.push('map-remote');
+    const out = { ...r, url: to };
+    if (!mr.preserveHost) out.headers = H.setHeader(r.headers, 'Host', new URL(to).host);
+    return out;
   }
 
   // Runs the full rule pipeline for a request and writes the response to `res` (if given).
@@ -314,16 +408,7 @@ class ProxyEngine extends EventEmitter {
     }
 
     // Map Remote
-    const mr = findRule(cfg.mapRemote, r.method, r.url);
-    if (mr) {
-      const to = mapRemoteURL(r.url, mr);
-      if (to !== r.url) {
-        flow.originalUrl = r.url;
-        r = { ...r, url: to };
-        if (!mr.preserveHost) r.headers = H.setHeader(r.headers, 'Host', new URL(to).host);
-        flow.tags.push('map-remote');
-      }
-    }
+    r = this.applyMapRemote(flow, r);
 
     // No caching
     if (cfg.noCache) {
@@ -427,9 +512,9 @@ class ProxyEngine extends EventEmitter {
       const t = cfg.throttle;
       if (t.enabled && t.latency > 0) await sleep(Number(t.latency));
       try {
-        res.writeHead(resp.status, resp.statusMessage || undefined, H.pairsToObject(headers));
+        writeHead(res, resp.status, resp.statusMessage, H.pairsToObject(headers));
       } catch (e) {
-        res.writeHead(resp.status, H.pairsToObject(headers.filter(([k, v]) => /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(k) && !/[\r\n]/.test(v))));
+        writeHead(res, resp.status, null, H.pairsToObject(headers.filter(([k, v]) => /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(k) && !/[\r\n]/.test(v))));
       }
       if (noBody) res.end();
       else await writeThrottled(res, resp.body, t.enabled ? Number(t.downloadKbps) : 0);
@@ -437,74 +522,115 @@ class ProxyEngine extends EventEmitter {
     this.finish(flow);
   }
 
-  upstream(flow, r, clientRes) {
+  // Sends the request upstream and buffers the response (streams it for SSE, gRPC and huge bodies).
+  async upstream(flow, r, clientRes) {
     const cfg = this.cfg;
+    const up = await this.openUpstream(flow, r);
+    flow.timing.firstByte = Date.now();
+    if (clientRes) clientRes.on('close', () => { if (!clientRes.writableFinished) up.stream.destroy(); });
+    const ct = H.getHeader(up.headers, 'content-type') || '';
+    const len = Number(H.getHeader(up.headers, 'content-length') || 0);
+    if (/text\/event-stream|application\/grpc/i.test(ct) || len > cfg.maxBodySize) {
+      await this.streamThrough(flow, up, clientRes);
+      return { streamed: true };
+    }
+    const body = await H.readBody(up.stream);
+    return { status: up.status, statusMessage: up.statusMessage, headers: up.headers, body, modified: false };
+  }
+
+  // Opens the upstream request. HTTP/2 clients get HTTP/2 upstream when the server supports it.
+  // Resolves with { protocol, status, statusMessage, headers, stream, trailers: Promise<pairs|null> }.
+  async openUpstream(flow, r) {
+    const cfg = this.cfg;
+    const u = new URL(r.url);
+    const secure = u.protocol === 'https:';
+    const verify = !!cfg.verifyUpstreamTLS;
+    const via = this.upstreamConn.route(u.hostname.replace(/^\[|\]$/g, ''), secure);
+    flow.via = via ? via.label : null;
+    flow.timing.sent = Date.now();
+    if (cfg.http2 && String(flow.httpVersion).startsWith('2')) {
+      const up = await this.h2client.request(u, { method: r.method, headers: r.headers, body: r.body, rejectUnauthorized: verify, ca: this.extraCA });
+      if (up) {
+        flow.upstreamProtocol = 'h2';
+        return up;
+      }
+    }
+    flow.upstreamProtocol = 'http/1.1';
+    return this.openH1(u, r, secure, verify);
+  }
+
+  openH1(u, r, secure, verify) {
     return new Promise((resolve, reject) => {
-      const u = new URL(r.url);
-      const secure = u.protocol === 'https:';
+      const streamingBody = !Buffer.isBuffer(r.body);
       let headers = H.stripHopByHop(r.headers);
-      const hasBody = r.body.length > 0 || ['POST', 'PUT', 'PATCH'].includes(r.method);
-      if (hasBody) headers = H.setHeader(headers, 'Content-Length', r.body.length);
+      if (streamingBody) headers = H.removeHeader(headers, 'Content-Length');
+      else if (r.body.length > 0 || ['POST', 'PUT', 'PATCH'].includes(r.method)) headers = H.setHeader(headers, 'Content-Length', r.body.length);
       else headers = H.removeHeader(headers, 'Content-Length');
-      const opts = {
+      const hostname = u.hostname.replace(/^\[|\]$/g, '');
+      const base = {
         method: r.method,
-        hostname: u.hostname.replace(/^\[|\]$/g, ''),
+        hostname,
         port: u.port || (secure ? 443 : 80),
         path: u.pathname + u.search,
         headers: H.pairsToObject(headers),
-        agent: secure ? this.agents.https : this.agents.http,
         setHost: !headers.some(([k]) => k.toLowerCase() === 'host'),
       };
+      let opts;
       if (secure) {
-        opts.rejectUnauthorized = !!cfg.verifyUpstreamTLS;
-        if (!net.isIP(opts.hostname)) opts.servername = opts.hostname;
-        opts.agent = cfg.verifyUpstreamTLS ? this.agents.https : (this.agents.httpsInsecure ||= new https.Agent({ keepAlive: true, rejectUnauthorized: false }));
+        const agents = this.upstreamConn.agents(verify, this.extraCA);
+        opts = { ...base, agent: agents.https, rejectUnauthorized: verify, servername: net.isIP(hostname) ? undefined : hostname };
+      } else {
+        ({ opts } = this.upstreamConn.httpOptions(u, base, verify, this.extraCA));
       }
-      const up = (secure ? https : http).request(opts, (upRes) => {
-        flow.timing.firstByte = Date.now();
-        const resHeaders = H.rawToPairs(upRes.rawHeaders);
-        const ct = upRes.headers['content-type'] || '';
-        const len = Number(upRes.headers['content-length'] || 0);
-        if (/text\/event-stream|application\/grpc/i.test(ct) || len > cfg.maxBodySize) {
-          return this.streamThrough(flow, upRes, resHeaders, clientRes, cfg).then(() => resolve({ streamed: true }), reject);
-        }
-        const chunks = [];
-        upRes.on('data', (c) => chunks.push(c));
-        upRes.on('end', () => resolve({ status: upRes.statusCode, statusMessage: upRes.statusMessage, headers: resHeaders, body: Buffer.concat(chunks), modified: false }));
-        upRes.on('error', reject);
+      const req = (secure ? https : http).request(opts, (upRes) => {
+        const trailers = new Promise((done) => {
+          upRes.on('end', () => done(upRes.rawTrailers.length ? H.rawToPairs(upRes.rawTrailers) : null));
+          upRes.on('close', () => done(null));
+        });
+        resolve({ protocol: 'http/1.1', status: upRes.statusCode, statusMessage: upRes.statusMessage, headers: H.rawToPairs(upRes.rawHeaders), stream: upRes, trailers });
       });
-      up.on('error', reject);
-      up.setTimeout(120000, () => up.destroy(new Error('Upstream timed out after 120s')));
-      if (clientRes) clientRes.on('close', () => { if (!clientRes.writableFinished) up.destroy(); });
-      flow.timing.sent = Date.now();
-      up.end(r.body);
+      req.on('error', reject);
+      req.setTimeout(120000, () => req.destroy(new Error('Upstream timed out after 120s')));
+      if (streamingBody) r.body.pipe(req);
+      else req.end(r.body);
     });
   }
 
-  streamThrough(flow, upRes, resHeaders, clientRes, cfg) {
-    flow.status = upRes.statusCode;
-    flow.statusMessage = upRes.statusMessage;
-    flow.resHeaders = resHeaders;
-    flow.tags.push('streamed');
+  streamThrough(flow, up, clientRes) {
+    const cfg = this.cfg;
+    flow.status = up.status;
+    flow.statusMessage = up.statusMessage || http.STATUS_CODES[up.status] || '';
+    flow.resHeaders = up.headers;
+    if (!flow.tags.includes('streamed')) flow.tags.push('streamed');
     this.touch(flow);
-    if (clientRes) clientRes.writeHead(upRes.statusCode, upRes.statusMessage, H.pairsToObject(H.stripHopByHop(resHeaders)));
+    if (clientRes) writeHead(clientRes, up.status, up.statusMessage, H.pairsToObject(H.stripHopByHop(up.headers)));
     const captured = [];
     let size = 0;
     return new Promise((resolve) => {
-      upRes.on('data', (c) => {
+      up.stream.on('data', (c) => {
         size += c.length;
         if (size <= cfg.maxBodySize) captured.push(c);
         flow.resSize = size;
-        if (clientRes) clientRes.write(c);
+        if (clientRes && !clientRes.destroyed) clientRes.write(c);
       });
-      const done = () => {
-        if (clientRes) clientRes.end();
-        flow.resBody = H.decodeBody(Buffer.concat(captured), upRes.headers['content-encoding']);
+      let finished = false;
+      const done = async () => {
+        if (finished) return;
+        finished = true;
+        const trailers = await up.trailers;
+        if (trailers && trailers.length) {
+          flow.resTrailers = trailers;
+          // Sent on HTTP/2 and chunked HTTP/1.1 responses (Node drops them otherwise).
+          if (clientRes && !clientRes.destroyed) clientRes.addTrailers(H.pairsToObject(trailers));
+        }
+        if (clientRes && !clientRes.destroyed) clientRes.end();
+        flow.resBody = H.decodeBody(Buffer.concat(captured), H.getHeader(up.headers, 'content-encoding'));
         this.finish(flow);
         resolve();
       };
-      upRes.on('end', done);
-      upRes.on('error', done);
+      up.stream.on('end', done);
+      up.stream.on('error', done);
+      up.stream.on('close', done);
     });
   }
 
@@ -560,81 +686,97 @@ class ProxyEngine extends EventEmitter {
     return (ssl.include || []).some((p) => hostMatches(p, host));
   }
 
-  handleConnect(req, clientSocket, head) {
+  async handleConnect(req, clientSocket, head) {
     const [host, portStr] = splitHostPort(req.url);
     const port = Number(portStr) || 443;
+    const appP = clientSocket.__appP;
     clientSocket.on('error', () => {});
 
     if (!this.shouldIntercept(host)) return this.tunnel(req, clientSocket, head, host, port);
 
     clientSocket.write('HTTP/1.1 200 Connection Established\r\nProxy-Agent: Rae-Proxy\r\n\r\n');
     if (head && head.length) clientSocket.unshift(head);
-    clientSocket.once('readable', () => {
-      const chunk = clientSocket.read(1);
-      if (!chunk) return clientSocket.destroy();
-      clientSocket.unshift(chunk);
-      if (chunk[0] === 0x16) {
-        // TLS ClientHello → terminate TLS with a certificate for this host
-        let sni = null;
-        const tlsSocket = new tls.TLSSocket(clientSocket, {
-          isServer: true,
-          ALPNProtocols: ['http/1.1'],
-          secureContext: this.ca.contextFor(host),
-          SNICallback: (servername, cb) => {
-            sni = servername;
-            try { cb(null, this.ca.contextFor(servername || host)); } catch (e) { cb(e); }
-          },
-        });
-        tlsSocket.__target = { host, port, secure: true };
-        let secured = false;
-        tlsSocket.on('secure', () => { secured = true; });
-        tlsSocket.on('error', (err) => {
-          if (!secured) this.recordHandshakeFailure(sni || host, port, err, req.socket.remoteAddress);
-          tlsSocket.destroy();
-        });
-        this.inner.emit('connection', tlsSocket);
-      } else {
-        const plain = wrapSocket(clientSocket);
-        plain.__target = { host, port: Number(portStr) || 80, secure: false };
-        this.inner.emit('connection', plain);
-      }
+    // TLS records start with 0x16. Plain text is HTTP/1.x, or HTTP/2 with prior knowledge ("PRI * HTTP/2.0").
+    const prefix = await peekBytes(clientSocket, 3);
+    if (!prefix.length) return clientSocket.destroy();
+    if (prefix[0] === 0x16) return this.terminateTLS(req, clientSocket, host, port, appP);
+    const plain = wrapSocket(clientSocket);
+    plain.__target = { host, port: Number(portStr) || 80, secure: false };
+    plain.__appP = appP;
+    if (this.cfg.http2 && prefix.toString('latin1') === 'PRI') this.emitH2(plain);
+    else this.inner.emit('connection', plain);
+  }
+
+  // TLS ClientHello → terminate TLS with a certificate for this host, then route by ALPN.
+  terminateTLS(req, clientSocket, host, port, appP) {
+    let sni = null;
+    const tlsSocket = new tls.TLSSocket(clientSocket, {
+      isServer: true,
+      ALPNProtocols: this.cfg.http2 ? ['h2', 'http/1.1'] : ['http/1.1'],
+      secureContext: this.ca.contextFor(host),
+      SNICallback: (servername, cb) => {
+        sni = servername;
+        try { cb(null, this.ca.contextFor(servername || host)); } catch (e) { cb(e); }
+      },
+    });
+    let secured = false;
+    tlsSocket.on('error', (err) => {
+      if (!secured) this.recordHandshakeFailure(sni || host, port, err, req.socket.remoteAddress, appP);
+      tlsSocket.destroy();
+    });
+    tlsSocket.once('secure', () => {
+      secured = true;
+      // JS-level wrapper so data decrypted before a server is attached isn't lost.
+      const s = wrapSocket(tlsSocket);
+      s.__target = { host, port, secure: true };
+      s.__appP = appP;
+      if (tlsSocket.alpnProtocol === 'h2') this.emitH2(s);
+      else this.inner.emit('connection', s);
     });
   }
 
+  emitH2(socket) {
+    this.h2Pending = socket;
+    try { this.h2.emit('connection', socket); } finally { this.h2Pending = null; }
+  }
+
   tunnel(req, clientSocket, head, host, port) {
-    const flow = this.createFlow({ method: 'CONNECT', url: `https://${host}${port === 443 ? '' : ':' + port}`, tunnel: true, headers: H.rawToPairs(req.rawHeaders), clientAddr: req.socket.remoteAddress });
+    const flow = this.createFlow({ method: 'CONNECT', url: `https://${host}${port === 443 ? '' : ':' + port}`, tunnel: true, headers: H.rawToPairs(req.rawHeaders), clientAddr: req.socket.remoteAddress, appP: clientSocket.__appP });
     flow.tags.push('tunnel');
-    const upstream = net.connect(port, host, () => {
+    const via = this.upstreamConn.route(host, true);
+    flow.via = via ? via.label : null;
+    let upstream = null;
+    let bytes = 0;
+    const close = () => {
+      if (flow.timing.end) return;
+      flow.resSize = bytes;
+      this.finish(flow);
+      if (upstream) upstream.destroy();
+      clientSocket.destroy();
+    };
+    clientSocket.on('close', close);
+    this.upstreamConn.connect(host, port).then((sock) => {
+      upstream = sock;
+      if (clientSocket.destroyed) return sock.destroy();
       flow.status = 200;
       flow.statusMessage = 'Connection Established';
       flow.timing.firstByte = Date.now();
       this.touch(flow);
       clientSocket.write('HTTP/1.1 200 Connection Established\r\nProxy-Agent: Rae-Proxy\r\n\r\n');
-      if (head && head.length) upstream.write(head);
-      upstream.pipe(clientSocket);
-      clientSocket.pipe(upstream);
+      if (head && head.length) sock.write(head);
+      sock.on('data', (c) => { bytes += c.length; });
+      sock.pipe(clientSocket);
+      clientSocket.pipe(sock);
+      sock.on('error', close);
+      sock.on('close', close);
+    }, (err) => {
+      this.fail(flow, err);
+      try { clientSocket.end('HTTP/1.1 502 Bad Gateway\r\n\r\n'); } catch {}
     });
-    let bytes = 0;
-    upstream.on('data', (c) => { bytes += c.length; });
-    const close = () => {
-      if (flow.timing.end) return;
-      flow.resSize = bytes;
-      this.finish(flow);
-      upstream.destroy();
-      clientSocket.destroy();
-    };
-    upstream.on('error', (err) => {
-      if (!flow.status) {
-        this.fail(flow, err);
-        try { clientSocket.end('HTTP/1.1 502 Bad Gateway\r\n\r\n'); } catch {}
-      } else close();
-    });
-    upstream.on('close', close);
-    clientSocket.on('close', close);
   }
 
-  recordHandshakeFailure(host, port, err, clientAddr) {
-    const flow = this.createFlow({ method: 'CONNECT', url: `https://${host}${port === 443 ? '' : ':' + port}`, tunnel: true, clientAddr });
+  recordHandshakeFailure(host, port, err, clientAddr, appP) {
+    const flow = this.createFlow({ method: 'CONNECT', url: `https://${host}${port === 443 ? '' : ':' + port}`, tunnel: true, clientAddr, appP });
     flow.tags.push('ssl-error');
     const msg = /certificate|unknown ca|bad certificate|alert/i.test(err.message)
       ? `TLS handshake failed — the client does not trust the Rae Proxy certificate or uses certificate pinning (${err.message}). Install & trust the CA, or exclude ${host} from SSL Proxying.`
@@ -657,7 +799,7 @@ class ProxyEngine extends EventEmitter {
     // Drop permessage-deflate so frames stay readable in the inspector.
     let headers = H.removeHeader(H.rawToPairs(req.rawHeaders), 'Sec-WebSocket-Extensions');
     if (target && target.reverse) headers = H.setHeader(headers, 'Host', u.host);
-    const flow = this.createFlow({ method: req.method, url, headers, ws: true, clientAddr: req.socket.remoteAddress });
+    const flow = this.createFlow({ method: req.method, url, headers, ws: true, clientAddr: req.socket.remoteAddress, appP: req.socket.__appP });
     flow.tags.push('websocket');
 
     const blocked = findRule(this.cfg.blockList, req.method, url);
@@ -667,16 +809,25 @@ class ProxyEngine extends EventEmitter {
       return this.fail(flow, new Error('Blocked by Block List'));
     }
 
-    const onConnect = () => {
-      flow.timing.sent = Date.now();
-      const path = u.pathname + u.search;
-      const lines = [`${req.method} ${path} HTTP/1.1`, ...headers.map(([k, v]) => `${k}: ${v}`)];
-      upstream.write(lines.join('\r\n') + '\r\n\r\n');
-      if (head && head.length) upstream.write(head);
-    };
-    const upstream = secure
-      ? tls.connect({ host: u.hostname, port, servername: net.isIP(u.hostname) ? undefined : u.hostname, rejectUnauthorized: !!this.cfg.verifyUpstreamTLS, ALPNProtocols: ['http/1.1'] }, onConnect)
-      : net.connect(port, u.hostname, onConnect);
+    const hostname = u.hostname.replace(/^\[|\]$/g, '');
+    const via = this.upstreamConn.route(hostname, secure);
+    flow.via = via ? via.label : null;
+    clientSocket.pause();
+    const connecting = secure
+      ? this.upstreamConn.connectTLS(hostname, port, { rejectUnauthorized: !!this.cfg.verifyUpstreamTLS, ca: this.extraCA })
+      : this.upstreamConn.connect(hostname, port, { secure: false });
+    connecting.then((sock) => this.pipeWebSocket(flow, req, clientSocket, head, headers, u, sock), (err) => {
+      this.fail(flow, err);
+      clientSocket.destroy();
+    });
+  }
+
+  pipeWebSocket(flow, req, clientSocket, head, headers, u, upstream) {
+    if (clientSocket.destroyed) return upstream.destroy();
+    flow.timing.sent = Date.now();
+    const lines = [`${req.method} ${u.pathname + u.search} HTTP/1.1`, ...headers.map(([k, v]) => `${k}: ${v}`)];
+    upstream.write(lines.join('\r\n') + '\r\n\r\n');
+    if (head && head.length) upstream.write(head);
 
     const record = (dir) => (m) => {
       if (flow.wsMessages.length < 5000) flow.wsMessages.push({ dir, time: Date.now(), ...m });
@@ -713,6 +864,7 @@ class ProxyEngine extends EventEmitter {
       if (handshakeDone) outParser.push(chunk);
       upstream.write(chunk);
     });
+    clientSocket.resume();
     const close = () => {
       upstream.destroy();
       clientSocket.destroy();
@@ -772,6 +924,44 @@ class ProxyEngine extends EventEmitter {
 }
 
 // ---------- helpers ----------
+function isStreamingRequest(ct) {
+  return /^application\/grpc/i.test(ct || '');
+}
+
+// HTTP/2 has no reason phrase; passing one to the compat API only emits warnings.
+function writeHead(res, status, message, headers) {
+  if (res.stream) return res.writeHead(status, headers);
+  return res.writeHead(status, message || undefined, headers);
+}
+
+// Reads at least n bytes, then puts them back so the next consumer sees the full stream.
+function peekBytes(sock, n) {
+  return new Promise((resolve) => {
+    const chunks = [];
+    let total = 0;
+    const finish = (b) => {
+      sock.off('data', onData);
+      sock.off('end', onEnd);
+      sock.off('close', onEnd);
+      resolve(b);
+    };
+    const onData = (c) => {
+      chunks.push(c);
+      total += c.length;
+      if (total < n) return;
+      sock.pause();
+      const all = Buffer.concat(chunks);
+      sock.unshift(all);
+      finish(all.subarray(0, n));
+    };
+    const onEnd = () => finish(Buffer.concat(chunks));
+    sock.on('data', onData);
+    sock.on('end', onEnd);
+    sock.on('close', onEnd);
+    sock.resume();
+  });
+}
+
 function normalizeIP(ip) {
   return String(ip || '').replace(/^::ffff:/i, '');
 }
