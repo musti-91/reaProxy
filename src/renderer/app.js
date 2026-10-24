@@ -79,6 +79,66 @@ function saveColumns() { localStorage.setItem('rae.columns', JSON.stringify(S.co
 const visibleColumns = () => S.columns.filter((c) => c.visible).map((c) => ({ ...c, def: COLS.find((d) => d.key === c.key) }));
 S.columns = loadColumns();
 
+// ---------------- session tabs: independent capture buffers sharing one proxy ----------------
+S.sessionTabs = [{ id: 1, name: 'Session 1' }];
+S.activeSessionTab = 1;
+S.flowTab = new Map(); // flow id -> session tab id, assigned the first time a flow is seen
+let nextTabId = 2;
+
+function assignNewFlow(id) {
+  if (!S.flowTab.has(id)) S.flowTab.set(id, S.activeSessionTab);
+}
+
+function renderSessionTabs() {
+  const el = $('#session-tabs');
+  if (!el) return;
+  el.replaceChildren(...S.sessionTabs.map((t) => {
+    const nameEl = h('span', { class: 'st-name' }, t.name);
+    return h('div', {
+      class: 'session-tab' + (t.id === S.activeSessionTab ? ' on' : ''),
+      onclick: () => switchSessionTab(t.id),
+      ondblclick: (e) => { e.stopPropagation(); startRenameTab(t, nameEl); },
+    }, nameEl, S.sessionTabs.length > 1 ? h('span', { class: 'st-close', onclick: (e) => { e.stopPropagation(); closeSessionTab(t.id); } }, '×') : null);
+  }), h('div', { class: 'session-tab-add', title: 'New session tab', onclick: newSessionTab }, '＋'));
+}
+
+function startRenameTab(t, nameEl) {
+  const input = h('input', { class: 'st-rename', value: t.name });
+  nameEl.replaceWith(input);
+  input.focus();
+  input.select();
+  const commit = () => { t.name = input.value.trim() || t.name; renderSessionTabs(); };
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') renderSessionTabs(); });
+  input.addEventListener('blur', commit);
+}
+
+function switchSessionTab(id) {
+  if (id === S.activeSessionTab) return;
+  S.activeSessionTab = id;
+  renderSessionTabs();
+  scheduleRender();
+}
+
+function newSessionTab() {
+  const id = nextTabId++;
+  S.sessionTabs.push({ id, name: `Session ${id}` });
+  S.activeSessionTab = id;
+  renderSessionTabs();
+  scheduleRender();
+}
+
+function closeSessionTab(id) {
+  if (S.sessionTabs.length <= 1) return;
+  const idx = S.sessionTabs.findIndex((t) => t.id === id);
+  if (idx === -1) return;
+  const ids = [...S.flowTab.entries()].filter(([, tabId]) => tabId === id).map(([fid]) => fid);
+  S.sessionTabs.splice(idx, 1);
+  if (S.activeSessionTab === id) S.activeSessionTab = S.sessionTabs[Math.max(0, idx - 1)].id;
+  if (ids.length) deleteFlows(ids);
+  renderSessionTabs();
+  scheduleRender();
+}
+
 // ---------------- state ----------------
 async function refreshState() {
   const st = await rae.invoke('state:get');
@@ -102,6 +162,7 @@ async function saveConfig(patch) {
 // ---------------- filtering / sorting ----------------
 function matchesFilter(f) {
   const { text, kind, status, side } = S.filter;
+  if (S.sessionTabs.length > 1 && S.flowTab.get(f.id) !== S.activeSessionTab) return false;
   if (side.type === 'host' && f.host !== side.value) return false;
   if (side.type === 'client' && clientKey(f) !== side.value) return false;
   if (side.type === 'pinned' && !S.config.pinned.includes(f.host)) return false;
@@ -342,7 +403,7 @@ function selectFlow(id, scroll) {
 
 async function deleteFlows(ids) {
   await rae.invoke('flows:delete', ids);
-  for (const id of ids) S.flows.delete(id);
+  for (const id of ids) { S.flows.delete(id); S.flowTab.delete(id); }
   S.selected.clear();
   if (ids.includes(S.focusId)) { S.focusId = null; S.detail = null; renderDetail(); }
   scheduleRender();
@@ -729,8 +790,13 @@ async function toggleSystemProxy() {
 }
 
 async function clearSession() {
+  if (S.sessionTabs.length > 1) {
+    const ids = [...S.flowTab.entries()].filter(([, t]) => t === S.activeSessionTab).map(([fid]) => fid);
+    return deleteFlows(ids);
+  }
   await rae.invoke('flows:clear');
   S.flows.clear();
+  S.flowTab.clear();
   S.selected.clear();
   S.focusId = null;
   S.detail = null;
@@ -819,6 +885,7 @@ rae.on('flows:update', (list) => {
   for (const f of list) {
     if (!S.flows.has(f.id)) hostsChanged = true;
     S.flows.set(f.id, f);
+    assignNewFlow(f.id);
     if (f.id === S.focusId) reloadDetail();
   }
   if (hostsChanged) scheduleSidebar();
@@ -826,6 +893,7 @@ rae.on('flows:update', (list) => {
 });
 rae.on('flows:reset', (list) => {
   S.flows = new Map(list.map((f) => [f.id, f]));
+  for (const f of list) assignNewFlow(f.id);
   renderSidebar();
   scheduleRender();
 });
@@ -846,9 +914,10 @@ rae.on('systemProxy:status', (on) => { S.systemProxy = on; updateChrome(); });
 // ---------------- boot ----------------
 (async () => {
   const st = await refreshState();
-  for (const f of st.flows) S.flows.set(f.id, f);
+  for (const f of st.flows) { S.flows.set(f.id, f); assignNewFlow(f.id); }
   renderHead();
   renderChips();
+  renderSessionTabs();
   renderSidebar();
   renderDetail();
   updateChrome();
