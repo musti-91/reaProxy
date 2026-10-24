@@ -239,6 +239,7 @@ function buildMenu() {
         { label: 'Breakpoints…', accelerator: 'Alt+Cmd+B', click: m('tool:breakpoints') },
         { label: 'Map Local…', accelerator: 'Alt+Cmd+L', click: m('tool:mapLocal') },
         { label: 'Map Remote…', accelerator: 'Alt+Cmd+R', click: m('tool:mapRemote') },
+        { label: 'Rewrite…', accelerator: 'Alt+Cmd+E', click: m('tool:rewrite') },
         { label: 'Scripting…', accelerator: 'Alt+Cmd+I', click: m('tool:scripting') },
         { label: 'Block List…', click: m('tool:blockList') },
         { label: 'Allow List…', click: m('tool:allowList') },

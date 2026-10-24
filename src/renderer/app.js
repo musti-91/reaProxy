@@ -466,6 +466,7 @@ async function rowMenu(id) {
         { id: 'tool-bp', label: 'Breakpoint…' },
         { id: 'tool-ml', label: 'Map Local (use this response)…', enabled: !f.tunnel },
         { id: 'tool-mr', label: 'Map Remote…' },
+        { id: 'tool-rw', label: 'Rewrite…' },
         { id: 'tool-sc', label: 'Scripting…' },
         { id: 'tool-block', label: 'Block List…' },
         { id: 'tool-allow', label: 'Allow List…' },
@@ -504,6 +505,7 @@ async function rowMenu(id) {
       break;
     }
     case 'tool-mr': openTools('mapRemote', { name: f.host, pattern: `${f.scheme}://${f.host}${f.port ? ':' + f.port : ''}/*` }); break;
+    case 'tool-rw': openTools('rewrite', { name: f.host + f.path.split('?')[0], pattern: pathPattern }); break;
     case 'tool-sc': openTools('scripting', { name: f.host + f.path.split('?')[0], pattern: pathPattern }); break;
     case 'tool-block': openTools('blockList', { name: f.host, pattern: `*://${f.host}/*` }); break;
     case 'tool-allow': openTools('allowList', { name: f.host, pattern: `*://${f.host}/*` }); break;
@@ -608,7 +610,7 @@ function updateChrome() {
   if (c.noCache) flags.push('No Caching');
   if (c.upstreamProxy.enabled && c.upstreamProxy.host) flags.push(`Upstream ${c.upstreamProxy.host}:${c.upstreamProxy.port}`);
   if (!c.http2) flags.push('HTTP/2 off');
-  for (const [k, label] of [['breakpoints', 'Breakpoints'], ['mapLocal', 'Map Local'], ['mapRemote', 'Map Remote'], ['scripting', 'Scripts'], ['blockList', 'Block'], ['allowList', 'Allow']]) {
+  for (const [k, label] of [['breakpoints', 'Breakpoints'], ['mapLocal', 'Map Local'], ['mapRemote', 'Map Remote'], ['rewrite', 'Rewrite'], ['scripting', 'Scripts'], ['blockList', 'Block'], ['allowList', 'Allow']]) {
     const n = activeRules(k);
     if (n) flags.push(`${label} ${n}`);
   }

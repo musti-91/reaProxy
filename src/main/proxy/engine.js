@@ -12,6 +12,7 @@ const { EventEmitter } = require('events');
 const { hostMatches, findRule, findRules, urlMatches } = require('../match');
 const H = require('./http-util');
 const scripting = require('./scripting');
+const rewrite = require('./rewrite');
 const { FrameParser } = require('./ws-frames');
 const { BodyStore, attachBodies } = require('./body-store');
 const { Upstream } = require('./upstream');
@@ -417,6 +418,12 @@ class ProxyEngine extends EventEmitter {
       r.headers = H.setHeader(r.headers, 'Pragma', 'no-cache');
     }
 
+    // Rewrite (request) — no-code header/status/body/URL edits
+    for (const rule of findRules(cfg.rewrite, r.method, r.url, (x) => (x.actions || []).some((a) => a.phase === 'request'))) {
+      r = rewrite.applyRequest(rule, r);
+      if (!flow.tags.includes('rewrite')) flow.tags.push('rewrite');
+    }
+
     // Scripting (request)
     for (const rule of findRules(cfg.scripting, r.method, r.url, (x) => x.request !== false)) {
       try {
@@ -455,6 +462,16 @@ class ProxyEngine extends EventEmitter {
 
     if (!resp.modified) resp.decoded = H.decodeBody(resp.body, H.getHeader(resp.headers, 'content-encoding'));
     else resp.decoded = resp.body;
+
+    // Rewrite (response) — no-code header/status/body edits
+    for (const rule of findRules(cfg.rewrite, r.method, r.url, (x) => (x.actions || []).some((a) => a.phase === 'response'))) {
+      const wrapped = { ...resp, body: resp.decoded };
+      const out = rewrite.applyResponse(rule, wrapped);
+      if (out !== wrapped) {
+        resp = { ...out, decoded: out.body, modified: true, rawBody: resp.body };
+        if (!flow.tags.includes('rewrite')) flow.tags.push('rewrite');
+      }
+    }
 
     // Scripting (response)
     for (const rule of findRules(cfg.scripting, r.method, r.url, (x) => x.response !== false)) {

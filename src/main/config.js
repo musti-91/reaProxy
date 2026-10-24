@@ -44,6 +44,7 @@ const DEFAULTS = {
   blockList: { enabled: true, rules: [] },
   allowList: { enabled: false, rules: [] },
   scripting: { enabled: true, rules: [] },
+  rewrite: { enabled: true, rules: [] },
   throttle: { enabled: false, preset: '3G', latency: 300, downloadKbps: 780, uploadKbps: 330 },
   reverseProxies: [],
 };

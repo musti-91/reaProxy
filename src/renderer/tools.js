@@ -51,6 +51,13 @@ const RULE_TOOLS = {
     ],
     sub: (r) => `→ ${r.toProtocol ? r.toProtocol + '://' : ''}${r.toHost || '*'}${r.toPort ? ':' + r.toPort : ''}${r.toPath || ''}`,
   },
+  rewrite: {
+    title: 'Rewrite',
+    desc: 'Add, modify or remove headers, rewrite the status code, URL or body text — all without writing code. Each rule can have multiple actions, applied to the request and/or response.',
+    defaults: { actions: [] },
+    fields: [...MATCH_FIELDS, { key: 'actions', label: 'Actions', type: 'actions' }],
+    sub: (r) => `${(r.actions || []).length} action${(r.actions || []).length === 1 ? '' : 's'}`,
+  },
   scripting: {
     title: 'Scripting',
     desc: 'Modify requests and responses with JavaScript. Define onRequest(context, url, request) and onResponse(context, url, request, response). Use console.log — output appears in the Script Console. sharedState persists between runs.',
@@ -78,6 +85,7 @@ const NAV = [
   ['breakpoints', 'Breakpoints'],
   ['mapLocal', 'Map Local'],
   ['mapRemote', 'Map Remote'],
+  ['rewrite', 'Rewrite'],
   ['scripting', 'Scripting'],
   ['blockList', 'Block List'],
   ['allowList', 'Allow List'],
@@ -126,8 +134,68 @@ function toolHead(title, desc, enabled, onToggle) {
     h('p', null, desc));
 }
 
+const ACTION_TYPES = [['header', 'Header'], ['status', 'Status Code'], ['body', 'Body Text'], ['url', 'URL'], ['method', 'Method']];
+const REQUEST_ONLY_TYPES = ['url', 'method'];
+const RESPONSE_ONLY_TYPES = ['status'];
+
+function newAction() {
+  return { id: uid(), phase: 'request', type: 'header', op: 'set', name: '', value: '', find: '', replace: '', regex: false, host: '', path: '', query: '' };
+}
+
+function actionsField(rule, onChange) {
+  if (!rule.actions) rule.actions = [];
+  const list = h('div', { class: 'actions-list' });
+  const commit = () => onChange('actions', rule.actions);
+  const draw = () => {
+    list.replaceChildren(...rule.actions.map((a, i) => actionRow(a, i)));
+    if (!rule.actions.length) list.append(h('div', { class: 'note' }, 'No actions yet. Add one below — e.g. “Set header X-Debug: 1” or “Rewrite status to 500”.'));
+  };
+  function actionRow(a, i) {
+    if (REQUEST_ONLY_TYPES.includes(a.type)) a.phase = 'request';
+    if (RESPONSE_ONLY_TYPES.includes(a.type)) a.phase = 'response';
+    const typeSel = h('select', { onchange: (e) => { a.type = e.target.value; draw(); commit(); } },
+      ACTION_TYPES.map(([v, l]) => h('option', { value: v, selected: a.type === v }, l)));
+    const phaseLocked = REQUEST_ONLY_TYPES.includes(a.type) || RESPONSE_ONLY_TYPES.includes(a.type);
+    const phaseSel = phaseLocked
+      ? h('span', { class: 'dim', style: { padding: '0 4px' } }, a.phase === 'request' ? 'Request' : 'Response')
+      : h('select', { onchange: (e) => { a.phase = e.target.value; commit(); } },
+          [['request', 'Request'], ['response', 'Response']].map(([v, l]) => h('option', { value: v, selected: a.phase === v }, l)));
+    const extra = [];
+    if (a.type === 'header') {
+      extra.push(
+        h('select', { onchange: (e) => { a.op = e.target.value; draw(); commit(); } },
+          [['set', 'Set'], ['add', 'Add'], ['remove', 'Remove']].map(([v, l]) => h('option', { value: v, selected: (a.op || 'set') === v }, l))),
+        h('input', { type: 'text', placeholder: 'Header name', value: a.name || '', oninput: (e) => { a.name = e.target.value; commit(); } }));
+      if (a.op !== 'remove') extra.push(h('input', { type: 'text', placeholder: 'Value', value: a.value || '', oninput: (e) => { a.value = e.target.value; commit(); } }));
+    } else if (a.type === 'status') {
+      extra.push(h('input', { type: 'number', placeholder: '500', value: a.value || '', style: { maxWidth: '100px' }, oninput: (e) => { a.value = e.target.value; commit(); } }));
+    } else if (a.type === 'body') {
+      extra.push(
+        h('input', { type: 'text', placeholder: a.regex ? 'Pattern (regex)' : 'Find text', value: a.find || '', oninput: (e) => { a.find = e.target.value; commit(); } }),
+        h('input', { type: 'text', placeholder: 'Replace with', value: a.replace || '', oninput: (e) => { a.replace = e.target.value; commit(); } }),
+        h('label', { class: 'check', style: { marginBottom: 0 } }, h('input', { type: 'checkbox', checked: !!a.regex, onchange: (e) => { a.regex = e.target.checked; commit(); } }), 'Regex'));
+    } else if (a.type === 'url') {
+      extra.push(
+        h('input', { type: 'text', placeholder: 'Host (keep if empty)', value: a.host || '', oninput: (e) => { a.host = e.target.value; commit(); } }),
+        h('input', { type: 'text', placeholder: 'Path', value: a.path || '', oninput: (e) => { a.path = e.target.value; commit(); } }),
+        h('input', { type: 'text', placeholder: 'Query (e.g. a=1&b=2)', value: a.query || '', oninput: (e) => { a.query = e.target.value; commit(); } }));
+    } else if (a.type === 'method') {
+      extra.push(h('select', { onchange: (e) => { a.value = e.target.value; commit(); } },
+        METHODS.slice(1).map((m) => h('option', { value: m, selected: a.value === m }, m))));
+    }
+    return h('div', { class: 'action-row' }, phaseSel, typeSel, ...extra, h('span', { class: 'grow' }),
+      h('button', { class: 'btn danger small', onclick: () => { rule.actions.splice(i, 1); draw(); commit(); } }, 'Remove'));
+  }
+  draw();
+  return h('div', { class: 'field', style: { flex: 1 } },
+    h('label', null, 'Actions'),
+    list,
+    h('button', { class: 'btn', style: { alignSelf: 'flex-start' }, onclick: () => { rule.actions.push(newAction()); draw(); commit(); } }, '＋ Add Action'));
+}
+
 function fieldEl(f, rule, onChange) {
   if (Array.isArray(f)) return h('div', { class: f.length === 3 ? 'row3' : 'row2' }, f.map((x) => fieldEl(x, rule, onChange)));
+  if (f.type === 'actions') return actionsField(rule, onChange);
   const val = rule[f.key];
   if (f.type === 'check') {
     return h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: !!val, onchange: (e) => onChange(f.key, e.target.checked) }), f.label);
@@ -169,7 +237,7 @@ function renderRuleTool(container, key, prefill) {
   if (prefill) persist();
 
   const list = h('div', { class: 'rule-items' });
-  const editor = h('div', { class: 'rule-editor' + (key === 'scripting' ? ' full' : '') });
+  const editor = h('div', { class: 'rule-editor' + (key === 'scripting' || key === 'rewrite' ? ' full' : '') });
 
   const renderList = () => {
     list.replaceChildren(...tool.rules.map((r) => h('div', { class: 'rule-item' + (r.id === selId ? ' sel' : ''), onclick: () => { selId = r.id; renderList(); renderEditor(); } },
