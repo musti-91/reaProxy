@@ -30,17 +30,54 @@ const KIND_CHIPS = ['All', 'HTTP', 'HTTPS', 'WebSocket', 'JSON', 'GraphQL', 'For
 const STATUS_CHIPS = ['1xx', '2xx', '3xx', '4xx', '5xx', 'Errors'];
 
 const COLS = [
-  { key: 'id', label: '#', get: (f) => f.id },
-  { key: 'client', label: 'Client', get: (f) => clientKey(f) || '' },
-  { key: 'url', label: 'URL', get: (f) => f.url },
-  { key: 'method', label: 'Method', get: (f) => f.method },
-  { key: 'status', label: 'Status', get: (f) => f.status || 0 },
-  { key: 'kind', label: 'Type', get: (f) => contentKind(f) },
-  { key: 'start', label: 'Time', get: (f) => f.start },
-  { key: 'duration', label: 'Duration', get: (f) => f.duration ?? -1 },
-  { key: 'size', label: 'Size', get: (f) => f.resSize },
-  { key: 'tags', label: 'Tags', get: (f) => f.tags.join(',') },
+  { key: 'id', label: '#', width: 54, get: (f) => f.id },
+  { key: 'client', label: 'Client', width: 130, get: (f) => clientKey(f) || '' },
+  { key: 'url', label: 'URL', width: 320, get: (f) => f.url },
+  { key: 'method', label: 'Method', width: 70, get: (f) => f.method },
+  { key: 'status', label: 'Status', width: 62, get: (f) => f.status || 0 },
+  { key: 'kind', label: 'Type', width: 92, get: (f) => contentKind(f) },
+  { key: 'start', label: 'Time', width: 100, get: (f) => f.start },
+  { key: 'duration', label: 'Duration', width: 76, get: (f) => f.duration ?? -1 },
+  { key: 'size', label: 'Size', width: 76, get: (f) => f.resSize },
+  { key: 'tags', label: 'Tags', width: 140, get: (f) => f.tags.join(',') },
 ];
+
+const CELL_RENDERERS = {
+  id: (f) => `<div class="dim">${f.id}</div>`,
+  client: (f) => `<div class="client">${clientCell(f)}</div>`,
+  url: (f) => {
+    let pathPart = f.path;
+    if (f.tunnel) pathPart = f.port ? `:${f.port}` : '';
+    const comment = f.comment ? `<span class="comment-dot" title="${esc(f.comment)}">💬</span>` : '';
+    return `<div class="url" title="${esc(f.url)}">${comment}<span class="host">${esc(f.scheme === 'https' && f.tunnel ? '🔒 ' : '')}${esc(f.ws ? (f.scheme === 'https' ? 'wss' : 'ws') : f.scheme)}://${esc(f.host)}</span>${esc(pathPart)}</div>`;
+  },
+  method: (f) => `<div class="method">${esc(f.method)}</div>`,
+  status: (f) => `<div>${statusCell(f)}</div>`,
+  kind: (f) => `<div class="dim">${esc(f.tunnel ? 'SSL tunnel' : contentKind(f))}</div>`,
+  start: (f) => `<div class="dim">${fmtTime(f.start)}</div>`,
+  duration: (f) => `<div class="dim">${f.duration === null ? '' : fmtDuration(f.duration)}</div>`,
+  size: (f) => `<div class="dim">${f.ws ? `${f.wsCount} msg` : fmtBytes(f.resSize)}</div>`,
+  tags: (f) => `<div>${f.tags.filter((t) => t !== 'tunnel').map((t) => `<span class="tag">${esc(t)}</span>`).join('')}</div>`,
+};
+
+// ---------------- columns: visibility, order, width (persisted in localStorage) ----------------
+function loadColumns() {
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem('rae.columns')); } catch {}
+  const byKey = new Map((saved || []).map((c) => [c.key, c]));
+  let cols = COLS.map((c) => {
+    const s = byKey.get(c.key);
+    return { key: c.key, width: s?.width || c.width, visible: s ? s.visible !== false : true };
+  });
+  if (saved && saved.every((s) => byKey.has(s.key)) && saved.length === cols.length) {
+    const order = saved.map((s) => s.key);
+    cols = cols.slice().sort((a, b) => order.indexOf(a.key) - order.indexOf(b.key));
+  }
+  return cols;
+}
+function saveColumns() { localStorage.setItem('rae.columns', JSON.stringify(S.columns)); }
+const visibleColumns = () => S.columns.filter((c) => c.visible).map((c) => ({ ...c, def: COLS.find((d) => d.key === c.key) }));
+S.columns = loadColumns();
 
 // ---------------- state ----------------
 async function refreshState() {
@@ -129,17 +166,58 @@ function scheduleRender(full = true) {
   });
 }
 
-function renderHead() {
-  $('#thead').replaceChildren(...COLS.map((c) => h('div', {
-    class: S.sort.col === c.key ? 'sorted' + (S.sort.asc ? ' asc' : '') : '',
-    onclick: () => {
-      if (S.sort.col === c.key) S.sort.asc = !S.sort.asc;
-      else S.sort = { col: c.key, asc: true };
-      renderHead();
-      scheduleRender();
-    },
-  }, c.label)));
+function applyColTemplate() {
+  $('#table').style.setProperty('--col-template', visibleColumns().map((c) => c.width + 'px').join(' '));
 }
+
+function startColResize(key, startX) {
+  const col = S.columns.find((c) => c.key === key);
+  const startW = col.width;
+  let moved = false;
+  const move = (e) => { moved = true; col.width = Math.max(40, startW + (e.clientX - startX)); applyColTemplate(); };
+  const up = () => {
+    document.removeEventListener('mousemove', move);
+    document.removeEventListener('mouseup', up);
+    if (moved) saveColumns();
+  };
+  document.addEventListener('mousemove', move);
+  document.addEventListener('mouseup', up);
+}
+
+async function columnsMenu() {
+  const items = S.columns.map((c) => ({ id: c.key, label: COLS.find((d) => d.key === c.key).label, checked: c.visible }));
+  const action = await rae.invoke('contextMenu', items);
+  if (!action) return;
+  const col = S.columns.find((c) => c.key === action);
+  if (!col) return;
+  if (col.visible && S.columns.filter((c) => c.visible).length <= 1) return toast('At least one column must stay visible');
+  col.visible = !col.visible;
+  saveColumns();
+  renderHead();
+  scheduleRender();
+}
+
+function renderHead() {
+  $('#thead').replaceChildren(...visibleColumns().map((c) => {
+    const cell = h('div', {
+      class: S.sort.col === c.key ? 'sorted' + (S.sort.asc ? ' asc' : '') : '',
+      onclick: () => {
+        if (S.sort.col === c.key) S.sort.asc = !S.sort.asc;
+        else S.sort = { col: c.key, asc: true };
+        renderHead();
+        scheduleRender();
+      },
+    }, c.def.label);
+    cell.append(h('div', {
+      class: 'col-resizer',
+      onclick: (e) => e.stopPropagation(),
+      onmousedown: (e) => { e.stopPropagation(); e.preventDefault(); startColResize(c.key, e.clientX); },
+    }));
+    return cell;
+  }));
+  applyColTemplate();
+}
+$('#thead').addEventListener('contextmenu', (e) => { e.preventDefault(); columnsMenu(); });
 
 function statusCell(f) {
   if (f.state === 'paused') return '<span class="st s4">Paused</span>';
@@ -159,24 +237,11 @@ function clientCell(f) {
   return `${appIconHTML(f.app)}<span title="${esc(f.app ? f.app : 'Device ' + key)}">${esc(key)}</span>`;
 }
 
-function rowHTML(f) {
+function rowHTML(f, cols) {
   const sel = S.selected.has(f.id);
-  let pathPart = f.path;
-  if (f.tunnel) pathPart = f.port ? `:${f.port}` : '';
-  const tags = f.tags.filter((t) => t !== 'tunnel').map((t) => `<span class="tag">${esc(t)}</span>`).join('');
   const color = f.color ? ` style="border-left: 3px solid ${FLOW_COLORS.find((c) => c[0] === f.color)?.[1] || 'transparent'}"` : '';
-  const comment = f.comment ? `<span class="comment-dot" title="${esc(f.comment)}">💬</span>` : '';
-  return `<div class="row${sel ? ' sel' : ''}${f.state === 'error' ? ' err' : ''}${f.state === 'paused' ? ' paused' : ''}" data-id="${f.id}"${color}>`
-    + `<div class="dim">${f.id}</div>`
-    + `<div class="client">${clientCell(f)}</div>`
-    + `<div class="url" title="${esc(f.url)}">${comment}<span class="host">${esc(f.scheme === 'https' && f.tunnel ? '🔒 ' : '')}${esc(f.ws ? (f.scheme === 'https' ? 'wss' : 'ws') : f.scheme)}://${esc(f.host)}</span>${esc(pathPart)}</div>`
-    + `<div class="method">${esc(f.method)}</div>`
-    + `<div>${statusCell(f)}</div>`
-    + `<div class="dim">${esc(f.tunnel ? 'SSL tunnel' : contentKind(f))}</div>`
-    + `<div class="dim">${fmtTime(f.start)}</div>`
-    + `<div class="dim">${f.duration === null ? '' : fmtDuration(f.duration)}</div>`
-    + `<div class="dim">${f.ws ? `${f.wsCount} msg` : fmtBytes(f.resSize)}</div>`
-    + `<div>${tags}</div></div>`;
+  const cells = cols.map((c) => CELL_RENDERERS[c.key](f)).join('');
+  return `<div class="row${sel ? ' sel' : ''}${f.state === 'error' ? ' err' : ''}${f.state === 'paused' ? ' paused' : ''}" data-id="${f.id}"${color}>${cells}</div>`;
 }
 
 function renderTable() {
@@ -188,8 +253,9 @@ function renderTable() {
   const height = tbody.clientHeight;
   const start = Math.max(0, Math.floor(top / ROW_H) - 10);
   const end = Math.min(n, Math.ceil((top + height) / ROW_H) + 10);
+  const cols = visibleColumns();
   let html = '';
-  for (let i = start; i < end; i++) html += rowHTML(S.view[i]);
+  for (let i = start; i < end; i++) html += rowHTML(S.view[i], cols);
   rowsEl.innerHTML = html;
   rowsEl.style.transform = `translateY(${start * ROW_H}px)`;
   [...rowsEl.children].forEach((r, i) => { r.style.top = i * ROW_H + 'px'; });
@@ -197,6 +263,7 @@ function renderTable() {
 
 tbody.addEventListener('scroll', () => {
   stickToBottom = tbody.scrollTop + tbody.clientHeight >= tbody.scrollHeight - ROW_H * 2;
+  $('#thead').scrollLeft = tbody.scrollLeft;
   renderTable();
 });
 new ResizeObserver(() => renderTable()).observe(tbody);
