@@ -414,6 +414,27 @@ function openCompose(init = {}) {
   url.focus();
 }
 
+// ---------- Comment editor ----------
+function openCommentEditor(id, current) {
+  const ta = codeArea({ value: current, style: { minHeight: '120px' } });
+  const save = async () => {
+    const comment = ta.value;
+    const f = S.flows.get(id);
+    if (f) f.comment = comment;
+    await rae.invoke('flow:setMeta', { ids: [id], comment });
+    m.close();
+    scheduleRender(false);
+  };
+  const m = openModal({
+    title: 'Comment',
+    sub: `#${id}`,
+    cls: 'small',
+    body: h('div', { class: 'field' }, h('label', null, 'Note for this request'), ta),
+    foot: [h('span', { class: 'grow' }), h('button', { class: 'btn', onclick: () => m.close() }, 'Cancel'), h('button', { class: 'btn primary', onclick: save }, 'Save')],
+  });
+  ta.focus();
+}
+
 // ---------- Repeat Advanced (count + concurrency, for load / race-condition testing) ----------
 function runPool(tasks, concurrency, onProgress) {
   let i = 0, done = 0, ok = 0, fail = 0, stopped = false;

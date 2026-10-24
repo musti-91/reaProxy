@@ -234,6 +234,18 @@ class ProxyEngine extends EventEmitter {
     if (flow.recorded) this.emit('flow', flow);
   }
 
+  // Renderer-set metadata (color tag, free-text comment) — purely cosmetic, never sent upstream.
+  setMeta(ids, patch) {
+    for (const id of Array.isArray(ids) ? ids : [ids]) {
+      const f = this.flows.get(id);
+      if (!f) continue;
+      if (patch.color !== undefined) f.color = patch.color;
+      if (patch.comment !== undefined) f.comment = patch.comment;
+      this.touch(f);
+    }
+    return true;
+  }
+
   finish(flow, patch = {}) {
     Object.assign(flow, patch);
     flow.timing.end = Date.now();

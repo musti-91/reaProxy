@@ -58,6 +58,8 @@ function summarize(f) {
     app: f.app,
     via: f.via,
     upstreamProtocol: f.upstreamProtocol,
+    color: f.color || null,
+    comment: f.comment || '',
   };
 }
 
@@ -315,6 +317,7 @@ function registerIpc() {
   h('flows:delete', (ids) => { engine.deleteFlows(ids); return true; });
   h('flow:get', (id) => { const f = engine.flows.get(id); return f ? detail(f) : null; });
   h('flow:repeat', (id) => engine.repeat(id));
+  h('flow:setMeta', ({ ids, color, comment }) => engine.setMeta(ids, { color, comment }));
   h('compose:send', (req) => engine.compose(req));
   h('breakpoint:resolve', ({ id, action, data }) => engine.resolveBreakpoint(id, action, data));
   h('systemProxy:set', (on) => setSystemProxy(on));

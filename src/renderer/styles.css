@@ -161,6 +161,7 @@ code, .mono { font-family: var(--mono); font-size: 11.5px; }
 .row.paused { background: rgba(217, 142, 4, 0.18); }
 .row .dim { color: var(--fg-dim); }
 .row .url { font-family: var(--mono); font-size: 11.5px; }
+.comment-dot { font-size: 10px; margin-right: 3px; cursor: help; }
 .row .url .host { font-weight: 600; }
 .st.s2 { color: var(--ok); }
 .st.s3 { color: var(--accent-2); }

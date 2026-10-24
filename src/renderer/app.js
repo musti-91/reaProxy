@@ -25,6 +25,7 @@ const isLocalAddr = (a) => !a || a === 'Rae Proxy' || /^(127\.|::1$)/.test(a);
 const clientKey = (f) => f.app || (isLocalAddr(f.clientAddr) ? null : f.clientAddr);
 
 const ROW_H = 24;
+const FLOW_COLORS = [['red', '#e5484d'], ['orange', '#d98e04'], ['yellow', '#e6c229'], ['green', '#28a745'], ['blue', '#0a84ff'], ['purple', '#8250df']];
 const KIND_CHIPS = ['All', 'HTTP', 'HTTPS', 'WebSocket', 'JSON', 'GraphQL', 'Form', 'XML', 'HTML', 'JS', 'CSS', 'Image', 'Media', 'Font'];
 const STATUS_CHIPS = ['1xx', '2xx', '3xx', '4xx', '5xx', 'Errors'];
 
@@ -77,7 +78,7 @@ function matchesFilter(f) {
     else if (!f.status || String(f.status)[0] !== status[0]) return false;
   }
   if (text) {
-    const hay = `${f.method} ${f.url} ${f.status || ''} ${f.tags.join(' ')} ${f.clientAddr} ${f.app || ''}`.toLowerCase();
+    const hay = `${f.method} ${f.url} ${f.status || ''} ${f.tags.join(' ')} ${f.clientAddr} ${f.app || ''} ${f.comment || ''}`.toLowerCase();
     for (const term of text.toLowerCase().split(/\s+/).filter(Boolean)) {
       const neg = term.startsWith('-') && term.length > 1;
       const t = neg ? term.slice(1) : term;
@@ -163,10 +164,12 @@ function rowHTML(f) {
   let pathPart = f.path;
   if (f.tunnel) pathPart = f.port ? `:${f.port}` : '';
   const tags = f.tags.filter((t) => t !== 'tunnel').map((t) => `<span class="tag">${esc(t)}</span>`).join('');
-  return `<div class="row${sel ? ' sel' : ''}${f.state === 'error' ? ' err' : ''}${f.state === 'paused' ? ' paused' : ''}" data-id="${f.id}">`
+  const color = f.color ? ` style="border-left: 3px solid ${FLOW_COLORS.find((c) => c[0] === f.color)?.[1] || 'transparent'}"` : '';
+  const comment = f.comment ? `<span class="comment-dot" title="${esc(f.comment)}">💬</span>` : '';
+  return `<div class="row${sel ? ' sel' : ''}${f.state === 'error' ? ' err' : ''}${f.state === 'paused' ? ' paused' : ''}" data-id="${f.id}"${color}>`
     + `<div class="dim">${f.id}</div>`
     + `<div class="client">${clientCell(f)}</div>`
-    + `<div class="url" title="${esc(f.url)}"><span class="host">${esc(f.scheme === 'https' && f.tunnel ? '🔒 ' : '')}${esc(f.ws ? (f.scheme === 'https' ? 'wss' : 'ws') : f.scheme)}://${esc(f.host)}</span>${esc(pathPart)}</div>`
+    + `<div class="url" title="${esc(f.url)}">${comment}<span class="host">${esc(f.scheme === 'https' && f.tunnel ? '🔒 ' : '')}${esc(f.ws ? (f.scheme === 'https' ? 'wss' : 'ws') : f.scheme)}://${esc(f.host)}</span>${esc(pathPart)}</div>`
     + `<div class="method">${esc(f.method)}</div>`
     + `<div>${statusCell(f)}</div>`
     + `<div class="dim">${esc(f.tunnel ? 'SSL tunnel' : contentKind(f))}</div>`
@@ -443,7 +446,11 @@ function summaryView(d) {
     d.tags.length ? ['Tags', d.tags.join(', ')] : null,
     d.error ? ['Error', d.error] : null,
   ].filter(Boolean);
-  return kvTable(rows);
+  return h('div', null, kvTable(rows),
+    h('div', { class: 'kv-section' }, 'Comment'),
+    h('div', { style: { padding: '2px 10px 10px' } },
+      d.comment ? h('p', { style: { whiteSpace: 'pre-wrap', margin: '0 0 8px' } }, d.comment) : h('p', { class: 'dim', style: { margin: '0 0 8px' } }, 'No comment'),
+      h('span', { class: 'link', onclick: () => openCommentEditor(d.id, d.comment || '') }, d.comment ? 'Edit…' : 'Add comment…')));
 }
 
 // ---------------- context menus ----------------
@@ -462,6 +469,14 @@ async function rowMenu(id) {
     { id: 'repeat-adv', label: 'Repeat Advanced…', enabled: !f.tunnel },
     { id: 'edit', label: 'Edit and Repeat…', enabled: !multi && !f.tunnel },
     { id: 'compare', label: 'Compare 2 Requests…', enabled: ids.length === 2 },
+    { type: 'separator' },
+    {
+      label: 'Color', submenu: [
+        { id: 'color-none', label: 'None' },
+        ...FLOW_COLORS.map(([key]) => ({ id: `color-${key}`, label: key[0].toUpperCase() + key.slice(1) })),
+      ],
+    },
+    { id: 'comment', label: f.comment ? 'Edit Comment…' : 'Add Comment…', enabled: !multi },
     { type: 'separator' },
     {
       label: 'Tools', submenu: [
@@ -485,6 +500,14 @@ async function rowMenu(id) {
     { id: 'delete', label: multi ? `Delete ${ids.length}` : 'Delete' },
   ]);
   if (!action) return;
+  if (action.startsWith('color-')) {
+    const color = action.slice(6);
+    for (const i of ids) S.flows.get(i).color = color === 'none' ? null : color;
+    rae.invoke('flow:setMeta', { ids, color: color === 'none' ? null : color });
+    scheduleRender(false);
+    return;
+  }
+  if (action === 'comment') return openCommentEditor(id, f.comment || '');
   const d = !multi ? await rae.invoke('flow:get', id) : null;
   const pathPattern = f.url.split('?')[0] + (f.url.includes('?') ? '*' : '');
   switch (action) {
