@@ -414,6 +414,64 @@ function openCompose(init = {}) {
   url.focus();
 }
 
+// ---------- Repeat Advanced (count + concurrency, for load / race-condition testing) ----------
+function runPool(tasks, concurrency, onProgress) {
+  let i = 0, done = 0, ok = 0, fail = 0, stopped = false;
+  const worker = async () => {
+    while (!stopped && i < tasks.length) {
+      const task = tasks[i++];
+      try { await task(); ok++; } catch { fail++; }
+      done++;
+      onProgress({ done, ok, fail, total: tasks.length });
+    }
+  };
+  const promise = Promise.all(Array.from({ length: Math.min(concurrency, tasks.length) }, worker));
+  return { promise, stop: () => { stopped = true; } };
+}
+
+function openRepeatAdvanced(ids) {
+  const count = h('input', { type: 'number', value: 10, min: 1, max: 10000 });
+  const concurrency = h('input', { type: 'number', value: 5, min: 1, max: 200 });
+  const bar = h('div', { class: 'progress-bar' }, h('div', { class: 'progress-fill' }));
+  const fill = bar.firstChild;
+  const stats = h('div', { class: 'hint' }, 'Not started');
+  let stopFn = null;
+  let running = false;
+  const runBtn = h('button', { class: 'btn primary', onclick: run }, 'Run');
+  async function run() {
+    if (running) { stopFn && stopFn(); return; }
+    const n = Math.max(1, Math.round(Number(count.value) || 1));
+    const c = Math.max(1, Math.round(Number(concurrency.value) || 1));
+    const tasks = [];
+    for (let r = 0; r < n; r++) for (const id of ids) tasks.push(() => rae.invoke('flow:repeat', id));
+    running = true;
+    runBtn.textContent = 'Stop';
+    fill.style.width = '0%';
+    const t0 = Date.now();
+    const { promise, stop } = runPool(tasks, c, ({ done, ok, fail, total }) => {
+      fill.style.width = `${(done / total) * 100}%`;
+      stats.textContent = `${done} / ${total} sent — ${ok} ok, ${fail} failed — ${((Date.now() - t0) / 1000).toFixed(1)}s`;
+    });
+    stopFn = stop;
+    await promise;
+    running = false;
+    stopFn = null;
+    runBtn.textContent = 'Run';
+  }
+  openModal({
+    title: 'Repeat Advanced',
+    sub: `${ids.length} request${ids.length === 1 ? '' : 's'} selected`,
+    cls: 'small',
+    body: h('div', null,
+      h('p', { style: { marginTop: 0, color: 'var(--fg-dim)', lineHeight: 1.5 } }, 'Repeats the selected request(s) N times with up to C requests in flight at once — simple load testing, or set concurrency to N for a race-condition test.'),
+      h('div', { class: 'row2' },
+        h('div', { class: 'field' }, h('label', null, 'Repeat count (N)'), count),
+        h('div', { class: 'field' }, h('label', null, 'Concurrency (C)'), concurrency)),
+      bar, stats),
+    foot: [h('span', { class: 'grow' }), runBtn],
+  });
+}
+
 // ---------- Compare (diff two requests) ----------
 function diffBlock(label, textA, textB) {
   if (textA === textB) return h('div', { class: 'diff-section' }, h('div', { class: 'diff-label' }, label, h('span', { class: 'dim' }, ' — identical')));

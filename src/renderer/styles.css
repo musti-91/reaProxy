@@ -310,6 +310,9 @@ pre.code {
 .compose-grid { display: grid; grid-template-columns: 110px 1fr; gap: 8px; margin-bottom: 12px; }
 .bp-meta { color: var(--fg-dim); margin-bottom: 10px; font-family: var(--mono); font-size: 11.5px; word-break: break-all; }
 
+.progress-bar { height: 8px; border-radius: 4px; background: var(--bg-hover); overflow: hidden; margin: 10px 0 6px; }
+.progress-fill { height: 100%; width: 0; background: var(--accent); transition: width .1s; }
+
 /* ---------- compare / diff ---------- */
 .diff-view { display: flex; flex-direction: column; gap: 18px; }
 .diff-label { font-weight: 600; margin-bottom: 6px; font-size: 12px; }

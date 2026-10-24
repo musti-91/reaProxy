@@ -459,6 +459,7 @@ async function rowMenu(id) {
     { id: 'copy-body', label: 'Copy Response Body', enabled: !multi && !f.tunnel },
     { type: 'separator' },
     { id: 'repeat', label: multi ? `Repeat ${ids.length} Requests` : 'Repeat', enabled: !f.tunnel },
+    { id: 'repeat-adv', label: 'Repeat Advanced…', enabled: !f.tunnel },
     { id: 'edit', label: 'Edit and Repeat…', enabled: !multi && !f.tunnel },
     { id: 'compare', label: 'Compare 2 Requests…', enabled: ids.length === 2 },
     { type: 'separator' },
@@ -491,6 +492,7 @@ async function rowMenu(id) {
     case 'copy-curl': rae.invoke('clipboard:write', toCurl(d)); toast('cURL copied'); break;
     case 'copy-body': rae.invoke('clipboard:write', d.resBody ? bytesToText(b64ToBytes(d.resBody)) : ''); toast('Body copied'); break;
     case 'repeat': for (const i of ids) rae.invoke('flow:repeat', i); break;
+    case 'repeat-adv': openRepeatAdvanced(ids); break;
     case 'edit': openComposeFrom(id); break;
     case 'compare': openCompare(ids[0], ids[1]); break;
     case 'tool-bp': openTools('breakpoints', { name: f.host + f.path.split('?')[0], pattern: pathPattern, method: f.method }); break;
