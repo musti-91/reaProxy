@@ -185,6 +185,34 @@ function codeArea(attrs) {
   return ta;
 }
 
+// Line-based diff (LCS). Returns [{type: 'same'|'add'|'del', text}]. Capped for huge inputs.
+function diffLines(aText, bText) {
+  const a = String(aText ?? '').split('\n');
+  const b = String(bText ?? '').split('\n');
+  const n = a.length, m = b.length;
+  if (n * m > 2_000_000) {
+    // Too big to diff cheaply — fall back to a single replace block.
+    return [...a.map((text) => ({ type: 'del', text })), ...b.map((text) => ({ type: 'add', text }))];
+  }
+  const dp = new Array(n + 1);
+  for (let i = 0; i <= n; i++) dp[i] = new Uint32Array(m + 1);
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+  const out = [];
+  let i = 0, j = 0;
+  while (i < n && j < m) {
+    if (a[i] === b[j]) { out.push({ type: 'same', text: a[i] }); i++; j++; }
+    else if (dp[i + 1][j] >= dp[i][j + 1]) { out.push({ type: 'del', text: a[i] }); i++; }
+    else { out.push({ type: 'add', text: b[j] }); j++; }
+  }
+  while (i < n) out.push({ type: 'del', text: a[i++] });
+  while (j < m) out.push({ type: 'add', text: b[j++] });
+  return out;
+}
+
 function switchEl(checked, onchange) {
   const input = h('input', { type: 'checkbox', checked: !!checked, onchange: (e) => onchange(e.target.checked) });
   return h('label', { class: 'switch' }, input, h('span'));

@@ -414,6 +414,29 @@ function openCompose(init = {}) {
   url.focus();
 }
 
+// ---------- Compare (diff two requests) ----------
+function diffBlock(label, textA, textB) {
+  if (textA === textB) return h('div', { class: 'diff-section' }, h('div', { class: 'diff-label' }, label, h('span', { class: 'dim' }, ' — identical')));
+  const ops = diffLines(textA, textB);
+  const lines = ops.map((op) => h('div', { class: 'diff-line ' + op.type }, h('span', { class: 'diff-sign' }, op.type === 'add' ? '+' : op.type === 'del' ? '−' : ' '), h('span', { class: 'diff-text' }, op.text)));
+  return h('div', { class: 'diff-section' }, h('div', { class: 'diff-label' }, label), h('div', { class: 'diff-body' }, lines));
+}
+
+async function openCompare(idA, idB) {
+  const [a, b] = await Promise.all([rae.invoke('flow:get', idA), rae.invoke('flow:get', idB)]);
+  if (!a || !b) return toast('One of the selected requests is no longer available');
+  const title = (d) => `#${d.id} ${d.method} ${d.url}`;
+  openModal({
+    title: 'Compare Requests',
+    sub: `${title(a)}  vs.  ${title(b)}`,
+    cls: 'wide',
+    body: h('div', { class: 'diff-view' },
+      diffBlock('Request', rawRequestText(a), rawRequestText(b)),
+      diffBlock('Response', rawResponseText(a), rawResponseText(b))),
+    foot: [h('span', { class: 'grow', style: { color: 'var(--fg-dim)' } }, h('span', { class: 'diff-sign add' }, '+'), ' only in #' + b.id, '   ', h('span', { class: 'diff-sign del' }, '−'), ' only in #' + a.id)],
+  });
+}
+
 // ---------- Breakpoints ----------
 const bpQueue = [];
 let bpOpen = null;

@@ -310,6 +310,17 @@ pre.code {
 .compose-grid { display: grid; grid-template-columns: 110px 1fr; gap: 8px; margin-bottom: 12px; }
 .bp-meta { color: var(--fg-dim); margin-bottom: 10px; font-family: var(--mono); font-size: 11.5px; word-break: break-all; }
 
+/* ---------- compare / diff ---------- */
+.diff-view { display: flex; flex-direction: column; gap: 18px; }
+.diff-label { font-weight: 600; margin-bottom: 6px; font-size: 12px; }
+.diff-body { font: 11.5px/1.5 var(--mono); background: var(--code-bg); border-radius: 8px; overflow: hidden; border: 1px solid var(--border); }
+.diff-line { display: flex; padding: 0 8px; white-space: pre-wrap; word-break: break-all; }
+.diff-line .diff-sign { width: 16px; flex-shrink: 0; color: var(--fg-faint); }
+.diff-line.add { background: rgba(40, 167, 69, 0.14); }
+.diff-line.add .diff-sign { color: var(--ok); }
+.diff-line.del { background: rgba(229, 72, 77, 0.14); }
+.diff-line.del .diff-sign { color: var(--err); }
+
 .actions-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
 .action-row { display: flex; gap: 6px; align-items: center; padding: 8px; border: 1px solid var(--border); border-radius: 8px; flex-wrap: wrap; }
 .action-row select, .action-row input[type=text], .action-row input[type=number] { padding: 5px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-elev); outline: none; }

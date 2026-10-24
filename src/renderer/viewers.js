@@ -169,16 +169,22 @@ function wsView(d) {
     h('span', { style: { textAlign: 'right', color: 'var(--fg-faint)' } }, `${m.type} · ${fmtBytes(m.length)}`))));
 }
 
-function rawRequest(d) {
+function rawRequestText(d) {
   const u = new URL(d.url);
   const body = b64ToBytes(d.reqBody);
   const head = `${d.method} ${d.tunnel ? u.host : u.pathname + u.search} HTTP/${d.httpVersion}\n${headersToText(d.reqHeaders)}`;
-  return h('pre', { class: 'code' }, head + '\n\n' + (looksBinary(body) ? `<binary ${fmtBytes(body.length)}>` : bytesToText(body)));
+  return head + '\n\n' + (looksBinary(body) ? `<binary ${fmtBytes(body.length)}>` : bytesToText(body));
 }
 
-function rawResponse(d) {
-  if (!d.status) return h('div', { class: 'pane-empty' }, d.error || 'No response');
+function rawResponseText(d) {
+  if (!d.status) return d.error || 'No response';
   const body = d.resBody ? b64ToBytes(d.resBody) : new Uint8Array();
   const head = `HTTP/${d.httpVersion} ${d.status} ${d.statusMessage || ''}\n${headersToText(d.resHeaders)}`;
-  return h('pre', { class: 'code' }, head + '\n\n' + (looksBinary(body) ? `<binary ${fmtBytes(body.length)}>` : bytesToText(body)));
+  return head + '\n\n' + (looksBinary(body) ? `<binary ${fmtBytes(body.length)}>` : bytesToText(body));
+}
+
+function rawRequest(d) { return h('pre', { class: 'code' }, rawRequestText(d)); }
+function rawResponse(d) {
+  if (!d.status) return h('div', { class: 'pane-empty' }, d.error || 'No response');
+  return h('pre', { class: 'code' }, rawResponseText(d));
 }
