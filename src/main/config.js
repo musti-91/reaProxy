@@ -1,5 +1,5 @@
-const fs = require('fs');
-const path = require('path');
+const fs = require("fs");
+const path = require("path");
 
 const CONFIG_VERSION = 2;
 
@@ -17,13 +17,13 @@ const DEFAULTS = {
   // Charles: External Proxy. The password is stored encrypted (passwordEnc), never in plain text.
   upstreamProxy: {
     enabled: false,
-    host: '',
-    port: '',
+    host: "",
+    port: "",
     sameForHttps: true,
-    httpsHost: '',
-    httpsPort: '',
-    username: '',
-    passwordEnc: '',
+    httpsHost: "",
+    httpsPort: "",
+    username: "",
+    passwordEnc: "",
     bypass: [],
   },
   maxBodySize: 50 * 1024 * 1024,
@@ -36,7 +36,12 @@ const DEFAULTS = {
   ssl: {
     interceptAll: true,
     include: [],
-    exclude: ['*.apple.com', '*.icloud.com', '*.mzstatic.com', '*.apple-cloudkit.com'],
+    exclude: [
+      "*.apple.com",
+      "*.icloud.com",
+      "*.mzstatic.com",
+      "*.apple-cloudkit.com",
+    ],
   },
   breakpoints: { enabled: true, rules: [] },
   mapLocal: { enabled: true, rules: [] },
@@ -45,15 +50,28 @@ const DEFAULTS = {
   allowList: { enabled: false, rules: [] },
   scripting: { enabled: true, rules: [] },
   rewrite: { enabled: true, rules: [] },
-  throttle: { enabled: false, preset: '3G', latency: 300, downloadKbps: 780, uploadKbps: 330 },
+  throttle: {
+    enabled: false,
+    preset: "3G",
+    latency: 300,
+    downloadKbps: 780,
+    uploadKbps: 330,
+  },
   reverseProxies: [],
 };
 
 function merge(base, patch) {
-  if (Array.isArray(patch) || typeof patch !== 'object' || patch === null) return patch;
+  if (Array.isArray(patch) || typeof patch !== "object" || patch === null)
+    return patch;
   const out = { ...base };
   for (const [k, v] of Object.entries(patch)) {
-    out[k] = base && typeof base[k] === 'object' && !Array.isArray(base[k]) && base[k] !== null ? merge(base[k], v) : v;
+    out[k] =
+      base &&
+      typeof base[k] === "object" &&
+      !Array.isArray(base[k]) &&
+      base[k] !== null
+        ? merge(base[k], v)
+        : v;
   }
   return out;
 }
@@ -69,13 +87,17 @@ function migrate(saved) {
 
 class Config {
   constructor(dir) {
-    this.file = path.join(dir, 'config.json');
+    this.file = path.join(dir, "config.json");
     this.listeners = [];
     let saved = {};
-    try { saved = JSON.parse(fs.readFileSync(this.file, 'utf8')); } catch {}
+    try {
+      saved = JSON.parse(fs.readFileSync(this.file, "utf8"));
+    } catch {}
     this.data = merge(DEFAULTS, migrate(saved));
   }
-  get() { return this.data; }
+  get() {
+    return this.data;
+  }
   set(patch) {
     const prev = this.data;
     this.data = merge(this.data, patch);
@@ -83,7 +105,9 @@ class Config {
     for (const fn of this.listeners) fn(this.data, prev);
     return this.data;
   }
-  onChange(fn) { this.listeners.push(fn); }
+  onChange(fn) {
+    this.listeners.push(fn);
+  }
   save() {
     clearTimeout(this.timer);
     this.timer = setTimeout(() => {

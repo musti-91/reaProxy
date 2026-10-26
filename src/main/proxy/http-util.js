@@ -1,6 +1,16 @@
-const zlib = require('zlib');
+const zlib = require("zlib");
 
-const HOP_BY_HOP = new Set(['connection', 'keep-alive', 'proxy-connection', 'proxy-authorization', 'proxy-authenticate', 'transfer-encoding', 'te', 'trailer', 'upgrade']);
+const HOP_BY_HOP = new Set([
+  "connection",
+  "keep-alive",
+  "proxy-connection",
+  "proxy-authorization",
+  "proxy-authenticate",
+  "transfer-encoding",
+  "te",
+  "trailer",
+  "upgrade",
+]);
 
 // Headers are kept as ordered [name, value] pairs so duplicates and casing survive.
 function rawToPairs(raw) {
@@ -49,13 +59,25 @@ function decodeBody(buf, encoding) {
   if (!buf || !buf.length || !encoding) return buf || Buffer.alloc(0);
   try {
     let out = buf;
-    for (const enc of String(encoding).toLowerCase().split(',').map((s) => s.trim()).reverse()) {
-      if (enc === 'gzip' || enc === 'x-gzip') out = zlib.gunzipSync(out, { finishFlush: zlib.constants.Z_SYNC_FLUSH });
-      else if (enc === 'deflate') {
-        try { out = zlib.inflateSync(out); } catch { out = zlib.inflateRawSync(out); }
-      } else if (enc === 'br') out = zlib.brotliDecompressSync(out);
-      else if (enc === 'zstd' && zlib.zstdDecompressSync) out = zlib.zstdDecompressSync(out);
-      else if (enc !== 'identity') return buf;
+    for (const enc of String(encoding)
+      .toLowerCase()
+      .split(",")
+      .map((s) => s.trim())
+      .reverse()) {
+      if (enc === "gzip" || enc === "x-gzip")
+        out = zlib.gunzipSync(out, {
+          finishFlush: zlib.constants.Z_SYNC_FLUSH,
+        });
+      else if (enc === "deflate") {
+        try {
+          out = zlib.inflateSync(out);
+        } catch {
+          out = zlib.inflateRawSync(out);
+        }
+      } else if (enc === "br") out = zlib.brotliDecompressSync(out);
+      else if (enc === "zstd" && zlib.zstdDecompressSync)
+        out = zlib.zstdDecompressSync(out);
+      else if (enc !== "identity") return buf;
     }
     return out;
   } catch {
@@ -65,16 +87,28 @@ function decodeBody(buf, encoding) {
 
 function isTextual(contentType) {
   if (!contentType) return false;
-  return /^text\/|json|xml|javascript|ecmascript|x-www-form-urlencoded|graphql|yaml|csv|html|svg/i.test(contentType);
+  return /^text\/|json|xml|javascript|ecmascript|x-www-form-urlencoded|graphql|yaml|csv|html|svg/i.test(
+    contentType,
+  );
 }
 
 function readBody(stream) {
   return new Promise((resolve, reject) => {
     const chunks = [];
-    stream.on('data', (c) => chunks.push(c));
-    stream.on('end', () => resolve(Buffer.concat(chunks)));
-    stream.on('error', reject);
+    stream.on("data", (c) => chunks.push(c));
+    stream.on("end", () => resolve(Buffer.concat(chunks)));
+    stream.on("error", reject);
   });
 }
 
-module.exports = { rawToPairs, getHeader, setHeader, removeHeader, stripHopByHop, pairsToObject, decodeBody, isTextual, readBody };
+module.exports = {
+  rawToPairs,
+  getHeader,
+  setHeader,
+  removeHeader,
+  stripHopByHop,
+  pairsToObject,
+  decodeBody,
+  isTextual,
+  readBody,
+};

@@ -5,41 +5,74 @@ const S = {
   proxy: {},
   ca: {},
   systemProxy: false,
-  scriptTemplate: '',
+  scriptTemplate: "",
   flows: new Map(),
   view: [],
   selected: new Set(),
   focusId: null,
   anchorId: null,
   detail: null,
-  filter: { text: '', kind: 'All', status: 'All', side: { type: 'all' } },
-  sort: { col: 'id', asc: true },
-  tabs: { req: 'Header', res: 'Body' },
+  filter: { text: "", kind: "All", status: "All", side: { type: "all" } },
+  sort: { col: "id", asc: true },
+  tabs: { req: "Header", res: "Body" },
   modes: { req: null, res: null },
-  sideSearch: '',
+  sideSearch: "",
   appIcons: {},
 };
 
-const isLocalAddr = (a) => !a || a === 'Rae Proxy' || /^(127\.|::1$)/.test(a);
+const isLocalAddr = (a) => !a || a === "Rae Proxy" || /^(127\.|::1$)/.test(a);
 // Sidebar / filter key for "who sent this": the app on this Mac, or the device's IP.
-const clientKey = (f) => f.app || (isLocalAddr(f.clientAddr) ? null : f.clientAddr);
+const clientKey = (f) =>
+  f.app || (isLocalAddr(f.clientAddr) ? null : f.clientAddr);
 
 const ROW_H = 24;
-const FLOW_COLORS = [['red', '#e5484d'], ['orange', '#d98e04'], ['yellow', '#e6c229'], ['green', '#28a745'], ['blue', '#0a84ff'], ['purple', '#8250df']];
-const KIND_CHIPS = ['All', 'HTTP', 'HTTPS', 'WebSocket', 'JSON', 'GraphQL', 'Form', 'XML', 'HTML', 'JS', 'CSS', 'Image', 'Media', 'Font'];
-const STATUS_CHIPS = ['1xx', '2xx', '3xx', '4xx', '5xx', 'Errors'];
+const FLOW_COLORS = [
+  ["red", "#e5484d"],
+  ["orange", "#d98e04"],
+  ["yellow", "#e6c229"],
+  ["green", "#28a745"],
+  ["blue", "#0a84ff"],
+  ["purple", "#8250df"],
+];
+const KIND_CHIPS = [
+  "All",
+  "HTTP",
+  "HTTPS",
+  "WebSocket",
+  "JSON",
+  "GraphQL",
+  "Form",
+  "XML",
+  "HTML",
+  "JS",
+  "CSS",
+  "Image",
+  "Media",
+  "Font",
+];
+const STATUS_CHIPS = ["1xx", "2xx", "3xx", "4xx", "5xx", "Errors"];
 
 const COLS = [
-  { key: 'id', label: '#', width: 54, get: (f) => f.id },
-  { key: 'client', label: 'Client', width: 130, get: (f) => clientKey(f) || '' },
-  { key: 'url', label: 'URL', width: 320, get: (f) => f.url },
-  { key: 'method', label: 'Method', width: 70, get: (f) => f.method },
-  { key: 'status', label: 'Status', width: 62, get: (f) => f.status || 0 },
-  { key: 'kind', label: 'Type', width: 92, get: (f) => contentKind(f) },
-  { key: 'start', label: 'Time', width: 100, get: (f) => f.start },
-  { key: 'duration', label: 'Duration', width: 76, get: (f) => f.duration ?? -1 },
-  { key: 'size', label: 'Size', width: 76, get: (f) => f.resSize },
-  { key: 'tags', label: 'Tags', width: 140, get: (f) => f.tags.join(',') },
+  { key: "id", label: "#", width: 54, get: (f) => f.id },
+  {
+    key: "client",
+    label: "Client",
+    width: 130,
+    get: (f) => clientKey(f) || "",
+  },
+  { key: "url", label: "URL", width: 320, get: (f) => f.url },
+  { key: "method", label: "Method", width: 70, get: (f) => f.method },
+  { key: "status", label: "Status", width: 62, get: (f) => f.status || 0 },
+  { key: "kind", label: "Type", width: 92, get: (f) => contentKind(f) },
+  { key: "start", label: "Time", width: 100, get: (f) => f.start },
+  {
+    key: "duration",
+    label: "Duration",
+    width: 76,
+    get: (f) => f.duration ?? -1,
+  },
+  { key: "size", label: "Size", width: 76, get: (f) => f.resSize },
+  { key: "tags", label: "Tags", width: 140, get: (f) => f.tags.join(",") },
 ];
 
 const CELL_RENDERERS = {
@@ -47,40 +80,66 @@ const CELL_RENDERERS = {
   client: (f) => `<div class="client">${clientCell(f)}</div>`,
   url: (f) => {
     let pathPart = f.path;
-    if (f.tunnel) pathPart = f.port ? `:${f.port}` : '';
-    const comment = f.comment ? `<span class="comment-dot" title="${esc(f.comment)}">💬</span>` : '';
-    return `<div class="url" title="${esc(f.url)}">${comment}<span class="host">${esc(f.scheme === 'https' && f.tunnel ? '🔒 ' : '')}${esc(f.ws ? (f.scheme === 'https' ? 'wss' : 'ws') : f.scheme)}://${esc(f.host)}</span>${esc(pathPart)}</div>`;
+    if (f.tunnel) pathPart = f.port ? `:${f.port}` : "";
+    const comment = f.comment
+      ? `<span class="comment-dot" title="${esc(f.comment)}">💬</span>`
+      : "";
+    return `<div class="url" title="${esc(f.url)}">${comment}<span class="host">${esc(f.scheme === "https" && f.tunnel ? "🔒 " : "")}${esc(f.ws ? (f.scheme === "https" ? "wss" : "ws") : f.scheme)}://${esc(f.host)}</span>${esc(pathPart)}</div>`;
   },
   method: (f) => `<div class="method">${esc(f.method)}</div>`,
   status: (f) => `<div>${statusCell(f)}</div>`,
-  kind: (f) => `<div class="dim">${esc(f.tunnel ? 'SSL tunnel' : contentKind(f))}</div>`,
+  kind: (f) =>
+    `<div class="dim">${esc(f.tunnel ? "SSL tunnel" : contentKind(f))}</div>`,
   start: (f) => `<div class="dim">${fmtTime(f.start)}</div>`,
-  duration: (f) => `<div class="dim">${f.duration === null ? '' : fmtDuration(f.duration)}</div>`,
-  size: (f) => `<div class="dim">${f.ws ? `${f.wsCount} msg` : fmtBytes(f.resSize)}</div>`,
-  tags: (f) => `<div>${f.tags.filter((t) => t !== 'tunnel').map((t) => `<span class="tag">${esc(t)}</span>`).join('')}</div>`,
+  duration: (f) =>
+    `<div class="dim">${f.duration === null ? "" : fmtDuration(f.duration)}</div>`,
+  size: (f) =>
+    `<div class="dim">${f.ws ? `${f.wsCount} msg` : fmtBytes(f.resSize)}</div>`,
+  tags: (f) =>
+    `<div>${f.tags
+      .filter((t) => t !== "tunnel")
+      .map((t) => `<span class="tag">${esc(t)}</span>`)
+      .join("")}</div>`,
 };
 
 // ---------------- columns: visibility, order, width (persisted in localStorage) ----------------
 function loadColumns() {
   let saved = null;
-  try { saved = JSON.parse(localStorage.getItem('rae.columns')); } catch {}
+  try {
+    saved = JSON.parse(localStorage.getItem("rae.columns"));
+  } catch {}
   const byKey = new Map((saved || []).map((c) => [c.key, c]));
   let cols = COLS.map((c) => {
     const s = byKey.get(c.key);
-    return { key: c.key, width: s?.width || c.width, visible: s ? s.visible !== false : true };
+    return {
+      key: c.key,
+      width: s?.width || c.width,
+      visible: s ? s.visible !== false : true,
+    };
   });
-  if (saved && saved.every((s) => byKey.has(s.key)) && saved.length === cols.length) {
+  if (
+    saved &&
+    saved.every((s) => byKey.has(s.key)) &&
+    saved.length === cols.length
+  ) {
     const order = saved.map((s) => s.key);
-    cols = cols.slice().sort((a, b) => order.indexOf(a.key) - order.indexOf(b.key));
+    cols = cols
+      .slice()
+      .sort((a, b) => order.indexOf(a.key) - order.indexOf(b.key));
   }
   return cols;
 }
-function saveColumns() { localStorage.setItem('rae.columns', JSON.stringify(S.columns)); }
-const visibleColumns = () => S.columns.filter((c) => c.visible).map((c) => ({ ...c, def: COLS.find((d) => d.key === c.key) }));
+function saveColumns() {
+  localStorage.setItem("rae.columns", JSON.stringify(S.columns));
+}
+const visibleColumns = () =>
+  S.columns
+    .filter((c) => c.visible)
+    .map((c) => ({ ...c, def: COLS.find((d) => d.key === c.key) }));
 S.columns = loadColumns();
 
 // ---------------- session tabs: independent capture buffers sharing one proxy ----------------
-S.sessionTabs = [{ id: 1, name: 'Session 1' }];
+S.sessionTabs = [{ id: 1, name: "Session 1" }];
 S.activeSessionTab = 1;
 S.flowTab = new Map(); // flow id -> session tab id, assigned the first time a flow is seen
 let nextTabId = 2;
@@ -90,26 +149,63 @@ function assignNewFlow(id) {
 }
 
 function renderSessionTabs() {
-  const el = $('#session-tabs');
+  const el = $("#session-tabs");
   if (!el) return;
-  el.replaceChildren(...S.sessionTabs.map((t) => {
-    const nameEl = h('span', { class: 'st-name' }, t.name);
-    return h('div', {
-      class: 'session-tab' + (t.id === S.activeSessionTab ? ' on' : ''),
-      onclick: () => switchSessionTab(t.id),
-      ondblclick: (e) => { e.stopPropagation(); startRenameTab(t, nameEl); },
-    }, nameEl, S.sessionTabs.length > 1 ? h('span', { class: 'st-close', onclick: (e) => { e.stopPropagation(); closeSessionTab(t.id); } }, '×') : null);
-  }), h('div', { class: 'session-tab-add', title: 'New session tab', onclick: newSessionTab }, '＋'));
+  el.replaceChildren(
+    ...S.sessionTabs.map((t) => {
+      const nameEl = h("span", { class: "st-name" }, t.name);
+      return h(
+        "div",
+        {
+          class: "session-tab" + (t.id === S.activeSessionTab ? " on" : ""),
+          onclick: () => switchSessionTab(t.id),
+          ondblclick: (e) => {
+            e.stopPropagation();
+            startRenameTab(t, nameEl);
+          },
+        },
+        nameEl,
+        S.sessionTabs.length > 1
+          ? h(
+              "span",
+              {
+                class: "st-close",
+                onclick: (e) => {
+                  e.stopPropagation();
+                  closeSessionTab(t.id);
+                },
+              },
+              "×",
+            )
+          : null,
+      );
+    }),
+    h(
+      "div",
+      {
+        class: "session-tab-add",
+        title: "New session tab",
+        onclick: newSessionTab,
+      },
+      "＋",
+    ),
+  );
 }
 
 function startRenameTab(t, nameEl) {
-  const input = h('input', { class: 'st-rename', value: t.name });
+  const input = h("input", { class: "st-rename", value: t.name });
   nameEl.replaceWith(input);
   input.focus();
   input.select();
-  const commit = () => { t.name = input.value.trim() || t.name; renderSessionTabs(); };
-  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') renderSessionTabs(); });
-  input.addEventListener('blur', commit);
+  const commit = () => {
+    t.name = input.value.trim() || t.name;
+    renderSessionTabs();
+  };
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") commit();
+    if (e.key === "Escape") renderSessionTabs();
+  });
+  input.addEventListener("blur", commit);
 }
 
 function switchSessionTab(id) {
@@ -131,9 +227,12 @@ function closeSessionTab(id) {
   if (S.sessionTabs.length <= 1) return;
   const idx = S.sessionTabs.findIndex((t) => t.id === id);
   if (idx === -1) return;
-  const ids = [...S.flowTab.entries()].filter(([, tabId]) => tabId === id).map(([fid]) => fid);
+  const ids = [...S.flowTab.entries()]
+    .filter(([, tabId]) => tabId === id)
+    .map(([fid]) => fid);
   S.sessionTabs.splice(idx, 1);
-  if (S.activeSessionTab === id) S.activeSessionTab = S.sessionTabs[Math.max(0, idx - 1)].id;
+  if (S.activeSessionTab === id)
+    S.activeSessionTab = S.sessionTabs[Math.max(0, idx - 1)].id;
   if (ids.length) deleteFlows(ids);
   renderSessionTabs();
   scheduleRender();
@@ -141,7 +240,7 @@ function closeSessionTab(id) {
 
 // ---------------- state ----------------
 async function refreshState() {
-  const st = await rae.invoke('state:get');
+  const st = await rae.invoke("state:get");
   S.config = st.config;
   S.proxy = st.proxy;
   S.ca = st.ca;
@@ -153,8 +252,9 @@ async function refreshState() {
 }
 
 async function saveConfig(patch) {
-  S.config = await rae.invoke('config:set', patch);
-  if (patch.port !== undefined || patch.listenAll !== undefined) await refreshState();
+  S.config = await rae.invoke("config:set", patch);
+  if (patch.port !== undefined || patch.listenAll !== undefined)
+    await refreshState();
   updateChrome();
   return S.config;
 }
@@ -162,33 +262,42 @@ async function saveConfig(patch) {
 // ---------------- filtering / sorting ----------------
 function matchesFilter(f) {
   const { text, kind, status, side } = S.filter;
-  if (S.sessionTabs.length > 1 && S.flowTab.get(f.id) !== S.activeSessionTab) return false;
-  if (side.type === 'host' && f.host !== side.value) return false;
-  if (side.type === 'client' && clientKey(f) !== side.value) return false;
-  if (side.type === 'pinned' && !S.config.pinned.includes(f.host)) return false;
-  if (kind !== 'All') {
-    if (kind === 'HTTP' && (f.scheme !== 'http' || f.ws)) return false;
-    if (kind === 'HTTPS' && f.scheme !== 'https') return false;
-    if (kind !== 'HTTP' && kind !== 'HTTPS' && contentKind(f) !== kind) return false;
+  if (S.sessionTabs.length > 1 && S.flowTab.get(f.id) !== S.activeSessionTab)
+    return false;
+  if (side.type === "host" && f.host !== side.value) return false;
+  if (side.type === "client" && clientKey(f) !== side.value) return false;
+  if (side.type === "pinned" && !S.config.pinned.includes(f.host)) return false;
+  if (kind !== "All") {
+    if (kind === "HTTP" && (f.scheme !== "http" || f.ws)) return false;
+    if (kind === "HTTPS" && f.scheme !== "https") return false;
+    if (kind !== "HTTP" && kind !== "HTTPS" && contentKind(f) !== kind)
+      return false;
   }
-  if (status !== 'All') {
-    if (status === 'Errors') { if (f.state !== 'error') return false; }
-    else if (!f.status || String(f.status)[0] !== status[0]) return false;
+  if (status !== "All") {
+    if (status === "Errors") {
+      if (f.state !== "error") return false;
+    } else if (!f.status || String(f.status)[0] !== status[0]) return false;
   }
   if (text) {
-    const hay = `${f.method} ${f.url} ${f.status || ''} ${f.tags.join(' ')} ${f.clientAddr} ${f.app || ''} ${f.comment || ''}`.toLowerCase();
+    const hay =
+      `${f.method} ${f.url} ${f.status || ""} ${f.tags.join(" ")} ${f.clientAddr} ${f.app || ""} ${f.comment || ""}`.toLowerCase();
     for (const term of text.toLowerCase().split(/\s+/).filter(Boolean)) {
-      const neg = term.startsWith('-') && term.length > 1;
+      const neg = term.startsWith("-") && term.length > 1;
       const t = neg ? term.slice(1) : term;
       const m = t.match(/^(method|status|host|tag|app):(.+)$/);
       let hit;
       if (m) {
         const v = m[2];
-        hit = m[1] === 'method' ? f.method.toLowerCase() === v
-          : m[1] === 'status' ? String(f.status || '').startsWith(v.replace(/x+$/, ''))
-          : m[1] === 'host' ? f.host.toLowerCase().includes(v)
-          : m[1] === 'app' ? (clientKey(f) || '').toLowerCase().includes(v)
-          : f.tags.some((x) => x.includes(v));
+        hit =
+          m[1] === "method"
+            ? f.method.toLowerCase() === v
+            : m[1] === "status"
+              ? String(f.status || "").startsWith(v.replace(/x+$/, ""))
+              : m[1] === "host"
+                ? f.host.toLowerCase().includes(v)
+                : m[1] === "app"
+                  ? (clientKey(f) || "").toLowerCase().includes(v)
+                  : f.tags.some((x) => x.includes(v));
       } else hit = hay.includes(t);
       if (hit === neg) return false;
     }
@@ -200,9 +309,10 @@ function recompute() {
   const col = COLS.find((c) => c.key === S.sort.col) || COLS[0];
   const list = [];
   for (const f of S.flows.values()) if (matchesFilter(f)) list.push(f);
-  if (col.key !== 'id') {
+  if (col.key !== "id") {
     list.sort((a, b) => {
-      const x = col.get(a), y = col.get(b);
+      const x = col.get(a),
+        y = col.get(b);
       return (x < y ? -1 : x > y ? 1 : a.id - b.id) * (S.sort.asc ? 1 : -1);
     });
   } else if (!S.sort.asc) list.reverse();
@@ -210,9 +320,9 @@ function recompute() {
 }
 
 // ---------------- table ----------------
-const tbody = $('#tbody');
-const rowsEl = $('#rows');
-const spacer = $('#spacer');
+const tbody = $("#tbody");
+const rowsEl = $("#rows");
+const spacer = $("#spacer");
 let renderQueued = false;
 let stickToBottom = true;
 
@@ -228,30 +338,44 @@ function scheduleRender(full = true) {
 }
 
 function applyColTemplate() {
-  $('#table').style.setProperty('--col-template', visibleColumns().map((c) => c.width + 'px').join(' '));
+  $("#table").style.setProperty(
+    "--col-template",
+    visibleColumns()
+      .map((c) => c.width + "px")
+      .join(" "),
+  );
 }
 
 function startColResize(key, startX) {
   const col = S.columns.find((c) => c.key === key);
   const startW = col.width;
   let moved = false;
-  const move = (e) => { moved = true; col.width = Math.max(40, startW + (e.clientX - startX)); applyColTemplate(); };
+  const move = (e) => {
+    moved = true;
+    col.width = Math.max(40, startW + (e.clientX - startX));
+    applyColTemplate();
+  };
   const up = () => {
-    document.removeEventListener('mousemove', move);
-    document.removeEventListener('mouseup', up);
+    document.removeEventListener("mousemove", move);
+    document.removeEventListener("mouseup", up);
     if (moved) saveColumns();
   };
-  document.addEventListener('mousemove', move);
-  document.addEventListener('mouseup', up);
+  document.addEventListener("mousemove", move);
+  document.addEventListener("mouseup", up);
 }
 
 async function columnsMenu() {
-  const items = S.columns.map((c) => ({ id: c.key, label: COLS.find((d) => d.key === c.key).label, checked: c.visible }));
-  const action = await rae.invoke('contextMenu', items);
+  const items = S.columns.map((c) => ({
+    id: c.key,
+    label: COLS.find((d) => d.key === c.key).label,
+    checked: c.visible,
+  }));
+  const action = await rae.invoke("contextMenu", items);
   if (!action) return;
   const col = S.columns.find((c) => c.key === action);
   if (!col) return;
-  if (col.visible && S.columns.filter((c) => c.visible).length <= 1) return toast('At least one column must stay visible');
+  if (col.visible && S.columns.filter((c) => c.visible).length <= 1)
+    return toast("At least one column must stay visible");
   col.visible = !col.visible;
   saveColumns();
   renderHead();
@@ -259,78 +383,101 @@ async function columnsMenu() {
 }
 
 function renderHead() {
-  $('#thead').replaceChildren(...visibleColumns().map((c) => {
-    const cell = h('div', {
-      class: S.sort.col === c.key ? 'sorted' + (S.sort.asc ? ' asc' : '') : '',
-      onclick: () => {
-        if (S.sort.col === c.key) S.sort.asc = !S.sort.asc;
-        else S.sort = { col: c.key, asc: true };
-        renderHead();
-        scheduleRender();
-      },
-    }, c.def.label);
-    cell.append(h('div', {
-      class: 'col-resizer',
-      onclick: (e) => e.stopPropagation(),
-      onmousedown: (e) => { e.stopPropagation(); e.preventDefault(); startColResize(c.key, e.clientX); },
-    }));
-    return cell;
-  }));
+  $("#thead").replaceChildren(
+    ...visibleColumns().map((c) => {
+      const cell = h(
+        "div",
+        {
+          class:
+            S.sort.col === c.key ? "sorted" + (S.sort.asc ? " asc" : "") : "",
+          onclick: () => {
+            if (S.sort.col === c.key) S.sort.asc = !S.sort.asc;
+            else S.sort = { col: c.key, asc: true };
+            renderHead();
+            scheduleRender();
+          },
+        },
+        c.def.label,
+      );
+      cell.append(
+        h("div", {
+          class: "col-resizer",
+          onclick: (e) => e.stopPropagation(),
+          onmousedown: (e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            startColResize(c.key, e.clientX);
+          },
+        }),
+      );
+      return cell;
+    }),
+  );
   applyColTemplate();
 }
-$('#thead').addEventListener('contextmenu', (e) => { e.preventDefault(); columnsMenu(); });
+$("#thead").addEventListener("contextmenu", (e) => {
+  e.preventDefault();
+  columnsMenu();
+});
 
 function statusCell(f) {
-  if (f.state === 'paused') return '<span class="st s4">Paused</span>';
-  if (f.state === 'error' && !f.status) return '<span class="st serr">Failed</span>';
+  if (f.state === "paused") return '<span class="st s4">Paused</span>';
+  if (f.state === "error" && !f.status)
+    return '<span class="st serr">Failed</span>';
   if (!f.status) return '<span class="dim">…</span>';
   return `<span class="st ${statusClass(f.status)}">${f.status}</span>`;
 }
 
 function appIconHTML(name) {
   const icon = name && S.appIcons[name];
-  return icon ? `<img class="app-ic" src="${icon}">` : '';
+  return icon ? `<img class="app-ic" src="${icon}">` : "";
 }
 
 function clientCell(f) {
   const key = clientKey(f);
-  if (!key) return '';
-  return `${appIconHTML(f.app)}<span title="${esc(f.app ? f.app : 'Device ' + key)}">${esc(key)}</span>`;
+  if (!key) return "";
+  return `${appIconHTML(f.app)}<span title="${esc(f.app ? f.app : "Device " + key)}">${esc(key)}</span>`;
 }
 
 function rowHTML(f, cols) {
   const sel = S.selected.has(f.id);
-  const color = f.color ? ` style="border-left: 3px solid ${FLOW_COLORS.find((c) => c[0] === f.color)?.[1] || 'transparent'}"` : '';
-  const cells = cols.map((c) => CELL_RENDERERS[c.key](f)).join('');
-  return `<div class="row${sel ? ' sel' : ''}${f.state === 'error' ? ' err' : ''}${f.state === 'paused' ? ' paused' : ''}" data-id="${f.id}"${color}>${cells}</div>`;
+  const color = f.color
+    ? ` style="border-left: 3px solid ${FLOW_COLORS.find((c) => c[0] === f.color)?.[1] || "transparent"}"`
+    : "";
+  const cells = cols.map((c) => CELL_RENDERERS[c.key](f)).join("");
+  return `<div class="row${sel ? " sel" : ""}${f.state === "error" ? " err" : ""}${f.state === "paused" ? " paused" : ""}" data-id="${f.id}"${color}>${cells}</div>`;
 }
 
 function renderTable() {
   const n = S.view.length;
-  spacer.style.height = n * ROW_H + 'px';
-  $('#empty').classList.toggle('hidden', S.flows.size > 0);
-  if (stickToBottom && S.sort.col === 'id' && S.sort.asc) tbody.scrollTop = tbody.scrollHeight;
+  spacer.style.height = n * ROW_H + "px";
+  $("#empty").classList.toggle("hidden", S.flows.size > 0);
+  if (stickToBottom && S.sort.col === "id" && S.sort.asc)
+    tbody.scrollTop = tbody.scrollHeight;
   const top = tbody.scrollTop;
   const height = tbody.clientHeight;
   const start = Math.max(0, Math.floor(top / ROW_H) - 10);
   const end = Math.min(n, Math.ceil((top + height) / ROW_H) + 10);
   const cols = visibleColumns();
-  let html = '';
+  let html = "";
   for (let i = start; i < end; i++) html += rowHTML(S.view[i], cols);
   rowsEl.innerHTML = html;
   rowsEl.style.transform = `translateY(${start * ROW_H}px)`;
-  [...rowsEl.children].forEach((r, i) => { r.style.top = i * ROW_H + 'px'; });
+  [...rowsEl.children].forEach((r, i) => {
+    r.style.top = i * ROW_H + "px";
+  });
 }
 
-tbody.addEventListener('scroll', () => {
-  stickToBottom = tbody.scrollTop + tbody.clientHeight >= tbody.scrollHeight - ROW_H * 2;
-  $('#thead').scrollLeft = tbody.scrollLeft;
+tbody.addEventListener("scroll", () => {
+  stickToBottom =
+    tbody.scrollTop + tbody.clientHeight >= tbody.scrollHeight - ROW_H * 2;
+  $("#thead").scrollLeft = tbody.scrollLeft;
   renderTable();
 });
 new ResizeObserver(() => renderTable()).observe(tbody);
 
-rowsEl.addEventListener('mousedown', (e) => {
-  const row = e.target.closest('.row');
+rowsEl.addEventListener("mousedown", (e) => {
+  const row = e.target.closest(".row");
   if (!row) return;
   const id = Number(row.dataset.id);
   if (e.button === 2 && S.selected.has(id)) return;
@@ -340,7 +487,9 @@ rowsEl.addEventListener('mousedown', (e) => {
   } else if (e.shiftKey && S.anchorId !== null) {
     const a = S.view.findIndex((f) => f.id === S.anchorId);
     const b = S.view.findIndex((f) => f.id === id);
-    S.selected = new Set(S.view.slice(Math.min(a, b), Math.max(a, b) + 1).map((f) => f.id));
+    S.selected = new Set(
+      S.view.slice(Math.min(a, b), Math.max(a, b) + 1).map((f) => f.id),
+    );
   } else {
     S.selected = new Set([id]);
     S.anchorId = id;
@@ -348,21 +497,27 @@ rowsEl.addEventListener('mousedown', (e) => {
   setFocus(id);
   tbody.focus();
 });
-rowsEl.addEventListener('dblclick', (e) => {
-  const row = e.target.closest('.row');
+rowsEl.addEventListener("dblclick", (e) => {
+  const row = e.target.closest(".row");
   if (row) openComposeFrom(Number(row.dataset.id));
 });
-rowsEl.addEventListener('contextmenu', (e) => {
+rowsEl.addEventListener("contextmenu", (e) => {
   e.preventDefault();
-  const row = e.target.closest('.row');
+  const row = e.target.closest(".row");
   if (row) rowMenu(Number(row.dataset.id));
 });
 tbody.tabIndex = 0;
-tbody.addEventListener('keydown', (e) => {
-  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+tbody.addEventListener("keydown", (e) => {
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
     e.preventDefault();
     const idx = S.view.findIndex((f) => f.id === S.focusId);
-    const next = S.view[Math.max(0, Math.min(S.view.length - 1, idx + (e.key === 'ArrowDown' ? 1 : -1)))];
+    const next =
+      S.view[
+        Math.max(
+          0,
+          Math.min(S.view.length - 1, idx + (e.key === "ArrowDown" ? 1 : -1)),
+        )
+      ];
     if (!next) return;
     if (!e.shiftKey) S.selected = new Set([next.id]);
     else S.selected.add(next.id);
@@ -370,17 +525,24 @@ tbody.addEventListener('keydown', (e) => {
     setFocus(next.id);
     const y = S.view.indexOf(next) * ROW_H;
     if (y < tbody.scrollTop) tbody.scrollTop = y;
-    else if (y + ROW_H > tbody.scrollTop + tbody.clientHeight) tbody.scrollTop = y + ROW_H - tbody.clientHeight;
-  } else if (e.key === 'a' && e.metaKey) {
+    else if (y + ROW_H > tbody.scrollTop + tbody.clientHeight)
+      tbody.scrollTop = y + ROW_H - tbody.clientHeight;
+  } else if (e.key === "a" && e.metaKey) {
     e.preventDefault();
     S.selected = new Set(S.view.map((f) => f.id));
     renderTable();
-  } else if ((e.key === 'Backspace' || e.key === 'Delete') && S.selected.size) {
+  } else if ((e.key === "Backspace" || e.key === "Delete") && S.selected.size) {
     deleteFlows([...S.selected]);
-  } else if (e.key === 'c' && e.metaKey && S.focusId) {
+  } else if (e.key === "c" && e.metaKey && S.focusId) {
     e.preventDefault();
-    rae.invoke('clipboard:write', [...S.selected].map((id) => S.flows.get(id)?.url).filter(Boolean).join('\n'));
-    toast('URL copied');
+    rae.invoke(
+      "clipboard:write",
+      [...S.selected]
+        .map((id) => S.flows.get(id)?.url)
+        .filter(Boolean)
+        .join("\n"),
+    );
+    toast("URL copied");
   }
 });
 
@@ -402,29 +564,59 @@ function selectFlow(id, scroll) {
 }
 
 async function deleteFlows(ids) {
-  await rae.invoke('flows:delete', ids);
-  for (const id of ids) { S.flows.delete(id); S.flowTab.delete(id); }
+  await rae.invoke("flows:delete", ids);
+  for (const id of ids) {
+    S.flows.delete(id);
+    S.flowTab.delete(id);
+  }
   S.selected.clear();
-  if (ids.includes(S.focusId)) { S.focusId = null; S.detail = null; renderDetail(); }
+  if (ids.includes(S.focusId)) {
+    S.focusId = null;
+    S.detail = null;
+    renderDetail();
+  }
   scheduleRender();
   scheduleSidebar();
 }
 
 // ---------------- filter bar ----------------
 function renderChips() {
-  const chip = (label, group) => h('span', {
-    class: 'chip' + (S.filter[group] === label ? ' on' : ''),
-    onclick: () => { S.filter[group] = S.filter[group] === label && label !== 'All' ? 'All' : label; renderChips(); scheduleRender(); },
-  }, label);
-  $('#chips').replaceChildren(...KIND_CHIPS.map((k) => chip(k, 'kind')), h('span', { class: 'chip-sep' }), ...STATUS_CHIPS.map((k) => chip(k, 'status')));
+  const chip = (label, group) =>
+    h(
+      "span",
+      {
+        class: "chip" + (S.filter[group] === label ? " on" : ""),
+        onclick: () => {
+          S.filter[group] =
+            S.filter[group] === label && label !== "All" ? "All" : label;
+          renderChips();
+          scheduleRender();
+        },
+      },
+      label,
+    );
+  $("#chips").replaceChildren(
+    ...KIND_CHIPS.map((k) => chip(k, "kind")),
+    h("span", { class: "chip-sep" }),
+    ...STATUS_CHIPS.map((k) => chip(k, "status")),
+  );
 }
-$('#filter').addEventListener('input', debounce((e) => { S.filter.text = e.target.value.trim(); scheduleRender(); }, 120));
+$("#filter").addEventListener(
+  "input",
+  debounce((e) => {
+    S.filter.text = e.target.value.trim();
+    scheduleRender();
+  }, 120),
+);
 
 // ---------------- sidebar ----------------
 let sidebarTimer = null;
 function scheduleSidebar() {
   if (sidebarTimer) return;
-  sidebarTimer = setTimeout(() => { sidebarTimer = null; renderSidebar(); }, 400);
+  sidebarTimer = setTimeout(() => {
+    sidebarTimer = null;
+    renderSidebar();
+  }, 400);
 }
 
 function renderSidebar() {
@@ -433,7 +625,7 @@ function renderSidebar() {
   for (const f of S.flows.values()) {
     const e = hosts.get(f.host) || { count: 0, https: false, tunnel: false };
     e.count++;
-    if (f.scheme === 'https' && !f.tunnel) e.https = true;
+    if (f.scheme === "https" && !f.tunnel) e.https = true;
     if (f.tunnel) e.tunnel = true;
     hosts.set(f.host, e);
     const key = clientKey(f);
@@ -441,44 +633,74 @@ function renderSidebar() {
   }
   const q = S.sideSearch.toLowerCase();
   const side = S.filter.side;
-  const item = (type, value, label, count, icon, extra) => h('div', {
-    class: 'sb-item' + (side.type === type && side.value === value ? ' sel' : ''),
-    title: label,
-    onclick: () => { S.filter.side = { type, value }; renderSidebar(); scheduleRender(); },
-    oncontextmenu: (e) => { e.preventDefault(); if (type === 'host' || type === 'pinnedHost') hostMenu(value); },
-  }, h('span', { class: 'ic' }, icon), h('span', { class: 'name' }, label), extra || null, count !== null ? h('span', { class: 'count' }, count) : null);
+  const item = (type, value, label, count, icon, extra) =>
+    h(
+      "div",
+      {
+        class:
+          "sb-item" +
+          (side.type === type && side.value === value ? " sel" : ""),
+        title: label,
+        onclick: () => {
+          S.filter.side = { type, value };
+          renderSidebar();
+          scheduleRender();
+        },
+        oncontextmenu: (e) => {
+          e.preventDefault();
+          if (type === "host" || type === "pinnedHost") hostMenu(value);
+        },
+      },
+      h("span", { class: "ic" }, icon),
+      h("span", { class: "name" }, label),
+      extra || null,
+      count !== null ? h("span", { class: "count" }, count) : null,
+    );
 
-  const out = [item('all', undefined, 'All Requests', S.flows.size, '◎')];
+  const out = [item("all", undefined, "All Requests", S.flows.size, "◎")];
   const pinned = S.config.pinned.filter((p) => !q || p.includes(q));
   if (pinned.length) {
-    out.push(h('div', { class: 'sb-section' }, 'Pinned'));
-    for (const p of pinned) out.push(item('host', p, p, hosts.get(p)?.count || 0, '📌'));
+    out.push(h("div", { class: "sb-section" }, "Pinned"));
+    for (const p of pinned)
+      out.push(item("host", p, p, hosts.get(p)?.count || 0, "📌"));
   }
   if (clients.size) {
-    out.push(h('div', { class: 'sb-section' }, 'Apps & Devices'));
-    for (const [c, n] of [...clients].sort((a, b) => a[0].localeCompare(b[0]))) {
+    out.push(h("div", { class: "sb-section" }, "Apps & Devices"));
+    for (const [c, n] of [...clients].sort((a, b) =>
+      a[0].localeCompare(b[0]),
+    )) {
       if (q && !c.toLowerCase().includes(q)) continue;
-      const icon = S.appIcons[c] ? h('img', { class: 'app-ic', src: S.appIcons[c] }) : /^[\d.:a-f]+$/i.test(c) ? '📱' : '⚙︎';
-      out.push(item('client', c, c, n, icon));
+      const icon = S.appIcons[c]
+        ? h("img", { class: "app-ic", src: S.appIcons[c] })
+        : /^[\d.:a-f]+$/i.test(c)
+          ? "📱"
+          : "⚙︎";
+      out.push(item("client", c, c, n, icon));
     }
   }
-  out.push(h('div', { class: 'sb-section' }, `Domains (${hosts.size})`));
+  out.push(h("div", { class: "sb-section" }, `Domains (${hosts.size})`));
   for (const [host, e] of [...hosts].sort((a, b) => a[0].localeCompare(b[0]))) {
     if (q && !host.toLowerCase().includes(q)) continue;
-    const icon = e.https ? '🔓' : e.tunnel ? '🔒' : '🌐';
-    out.push(item('host', host, host, e.count, icon));
+    const icon = e.https ? "🔓" : e.tunnel ? "🔒" : "🌐";
+    out.push(item("host", host, host, e.count, icon));
   }
-  $('#sidebar-list').replaceChildren(...out);
+  $("#sidebar-list").replaceChildren(...out);
 }
-$('#sidebar-search').addEventListener('input', (e) => { S.sideSearch = e.target.value; renderSidebar(); });
+$("#sidebar-search").addEventListener("input", (e) => {
+  S.sideSearch = e.target.value;
+  renderSidebar();
+});
 
 // ---------------- detail panes ----------------
 let detailSeq = 0;
 async function loadDetail() {
   const id = S.focusId;
-  if (!id) { S.detail = null; return renderDetail(); }
+  if (!id) {
+    S.detail = null;
+    return renderDetail();
+  }
   const seq = ++detailSeq;
-  const d = await rae.invoke('flow:get', id);
+  const d = await rae.invoke("flow:get", id);
   if (seq !== detailSeq) return;
   S.detail = d;
   renderDetail();
@@ -486,219 +708,526 @@ async function loadDetail() {
 const reloadDetail = debounce(loadDetail, 150);
 
 function paneHead(title, side, tabs, modes) {
-  const head = h('div', { class: 'pane-head' }, h('span', { class: 'pane-title' }, title));
+  const head = h(
+    "div",
+    { class: "pane-head" },
+    h("span", { class: "pane-title" }, title),
+  );
   for (const t of tabs) {
     const [name, badge] = Array.isArray(t) ? t : [t];
-    head.append(h('span', { class: 'tab' + (S.tabs[side] === name ? ' on' : ''), onclick: () => { S.tabs[side] = name; renderDetail(); } }, name, badge ? h('span', { class: 'badge' }, badge) : null));
+    head.append(
+      h(
+        "span",
+        {
+          class: "tab" + (S.tabs[side] === name ? " on" : ""),
+          onclick: () => {
+            S.tabs[side] = name;
+            renderDetail();
+          },
+        },
+        name,
+        badge ? h("span", { class: "badge" }, badge) : null,
+      ),
+    );
   }
   if (modes && modes.length) {
     const cur = modes.includes(S.modes[side]) ? S.modes[side] : modes[0];
-    head.append(h('div', { class: 'viewmodes' }, modes.map((m) => h('span', { class: 'tab' + (m === cur ? ' on' : ''), onclick: () => { S.modes[side] = m; renderDetail(); } }, m))));
+    head.append(
+      h(
+        "div",
+        { class: "viewmodes" },
+        modes.map((m) =>
+          h(
+            "span",
+            {
+              class: "tab" + (m === cur ? " on" : ""),
+              onclick: () => {
+                S.modes[side] = m;
+                renderDetail();
+              },
+            },
+            m,
+          ),
+        ),
+      ),
+    );
   }
   return head;
 }
 
 function renderDetail() {
   const d = S.detail;
-  const req = $('#pane-req');
-  const res = $('#pane-res');
+  const req = $("#pane-req");
+  const res = $("#pane-res");
   if (!d) {
-    req.replaceChildren(h('div', { class: 'pane-empty' }, 'Select a request'));
+    req.replaceChildren(h("div", { class: "pane-empty" }, "Select a request"));
     res.replaceChildren();
     return;
   }
-  const u = (() => { try { return new URL(d.url); } catch { return null; } })();
+  const u = (() => {
+    try {
+      return new URL(d.url);
+    } catch {
+      return null;
+    }
+  })();
   const query = u ? [...u.searchParams] : [];
   const reqBytes = b64ToBytes(d.reqBody);
   const resBytes = d.resBody ? b64ToBytes(d.resBody) : null;
-  const cookies = parseCookies(header(d.reqHeaders, 'cookie'));
+  const cookies = parseCookies(header(d.reqHeaders, "cookie"));
 
   // Request
-  const reqTabs = ['Header', ['Query', query.length || ''], ['Body', reqBytes.length ? fmtBytes(reqBytes.length) : ''], ['Cookies', cookies.length || ''], 'Raw', 'Summary'];
-  if (!reqTabs.some((t) => (Array.isArray(t) ? t[0] : t) === S.tabs.req)) S.tabs.req = 'Header';
-  const reqModes = S.tabs.req === 'Body' ? availableModes(reqBytes, d.reqContentType) : null;
+  const reqTabs = [
+    "Header",
+    ["Query", query.length || ""],
+    ["Body", reqBytes.length ? fmtBytes(reqBytes.length) : ""],
+    ["Cookies", cookies.length || ""],
+    "Raw",
+    "Summary",
+  ];
+  if (!reqTabs.some((t) => (Array.isArray(t) ? t[0] : t) === S.tabs.req))
+    S.tabs.req = "Header";
+  const reqModes =
+    S.tabs.req === "Body" ? availableModes(reqBytes, d.reqContentType) : null;
   let reqBody;
   switch (S.tabs.req) {
-    case 'Header':
-      reqBody = h('div', null, h('div', { class: 'kv-section' }, `${d.method} ${u ? (d.tunnel ? u.host : u.pathname + u.search) : d.url} HTTP/${d.httpVersion}`), kvTable(d.reqHeaders, 'No headers'));
+    case "Header":
+      reqBody = h(
+        "div",
+        null,
+        h(
+          "div",
+          { class: "kv-section" },
+          `${d.method} ${u ? (d.tunnel ? u.host : u.pathname + u.search) : d.url} HTTP/${d.httpVersion}`,
+        ),
+        kvTable(d.reqHeaders, "No headers"),
+      );
       break;
-    case 'Query': reqBody = kvTable(query, 'No query parameters'); break;
-    case 'Body': reqBody = renderBody(reqBytes, d.reqContentType, reqModes.includes(S.modes.req) ? S.modes.req : reqModes[0]); break;
-    case 'Cookies': reqBody = kvTable(cookies, 'No cookies'); break;
-    case 'Raw': reqBody = rawRequest(d); break;
-    case 'Summary': reqBody = summaryView(d); break;
+    case "Query":
+      reqBody = kvTable(query, "No query parameters");
+      break;
+    case "Body":
+      reqBody = renderBody(
+        reqBytes,
+        d.reqContentType,
+        reqModes.includes(S.modes.req) ? S.modes.req : reqModes[0],
+      );
+      break;
+    case "Cookies":
+      reqBody = kvTable(cookies, "No cookies");
+      break;
+    case "Raw":
+      reqBody = rawRequest(d);
+      break;
+    case "Summary":
+      reqBody = summaryView(d);
+      break;
   }
-  req.replaceChildren(paneHead('Request', 'req', reqTabs, reqModes), h('div', { class: 'pane-body' }, reqBody));
+  req.replaceChildren(
+    paneHead("Request", "req", reqTabs, reqModes),
+    h("div", { class: "pane-body" }, reqBody),
+  );
 
   // Response
-  const setCookies = (d.resHeaders || []).filter(([k]) => k.toLowerCase() === 'set-cookie').length;
-  const resTabs = [...(d.ws ? [['Messages', d.wsCount || '']] : []), 'Header', ['Body', resBytes && resBytes.length ? fmtBytes(resBytes.length) : ''], ['Set-Cookie', setCookies || ''], 'Raw', 'Timing'];
-  if (!resTabs.some((t) => (Array.isArray(t) ? t[0] : t) === S.tabs.res)) S.tabs.res = d.ws ? 'Messages' : 'Body';
-  const resModes = S.tabs.res === 'Body' && resBytes ? availableModes(resBytes, d.contentType) : null;
+  const setCookies = (d.resHeaders || []).filter(
+    ([k]) => k.toLowerCase() === "set-cookie",
+  ).length;
+  const resTabs = [
+    ...(d.ws ? [["Messages", d.wsCount || ""]] : []),
+    "Header",
+    ["Body", resBytes && resBytes.length ? fmtBytes(resBytes.length) : ""],
+    ["Set-Cookie", setCookies || ""],
+    "Raw",
+    "Timing",
+  ];
+  if (!resTabs.some((t) => (Array.isArray(t) ? t[0] : t) === S.tabs.res))
+    S.tabs.res = d.ws ? "Messages" : "Body";
+  const resModes =
+    S.tabs.res === "Body" && resBytes
+      ? availableModes(resBytes, d.contentType)
+      : null;
   let resBody;
-  if (!d.status && S.tabs.res !== 'Timing') {
-    resBody = h('div', { class: 'note' }, d.error ? h('div', { style: { color: 'var(--err)', lineHeight: 1.5 } }, h('b', null, 'Error: '), d.error) : d.state === 'paused' ? 'Paused at breakpoint…' : 'Waiting for response…');
+  if (!d.status && S.tabs.res !== "Timing") {
+    resBody = h(
+      "div",
+      { class: "note" },
+      d.error
+        ? h(
+            "div",
+            { style: { color: "var(--err)", lineHeight: 1.5 } },
+            h("b", null, "Error: "),
+            d.error,
+          )
+        : d.state === "paused"
+          ? "Paused at breakpoint…"
+          : "Waiting for response…",
+    );
   } else {
     switch (S.tabs.res) {
-      case 'Messages': resBody = wsView(d); break;
-      case 'Header':
-        resBody = h('div', null, h('div', { class: 'kv-section' }, `HTTP/${d.httpVersion} ${d.status} ${d.statusMessage || ''}`), kvTable(d.resHeaders, 'No headers'),
-          d.resTrailers && d.resTrailers.length ? [h('div', { class: 'kv-section' }, 'Trailers'), kvTable(d.resTrailers)] : null);
+      case "Messages":
+        resBody = wsView(d);
         break;
-      case 'Body':
-        resBody = d.tunnel ? h('div', { class: 'note' }, `Encrypted tunnel — enable SSL Proxying for ${d.host} to see the content.`, h('div', { style: { marginTop: '10px' } }, h('button', { class: 'btn primary', onclick: () => enableSSLFor(d.host) }, `Enable SSL Proxying for ${d.host}`)))
-          : renderBody(resBytes, d.contentType, resModes && resModes.length ? (resModes.includes(S.modes.res) ? S.modes.res : resModes[0]) : 'Text');
+      case "Header":
+        resBody = h(
+          "div",
+          null,
+          h(
+            "div",
+            { class: "kv-section" },
+            `HTTP/${d.httpVersion} ${d.status} ${d.statusMessage || ""}`,
+          ),
+          kvTable(d.resHeaders, "No headers"),
+          d.resTrailers && d.resTrailers.length
+            ? [
+                h("div", { class: "kv-section" }, "Trailers"),
+                kvTable(d.resTrailers),
+              ]
+            : null,
+        );
         break;
-      case 'Set-Cookie': resBody = setCookieTable(d.resHeaders); break;
-      case 'Raw': resBody = rawResponse(d); break;
-      case 'Timing': resBody = timingView(d); break;
+      case "Body":
+        resBody = d.tunnel
+          ? h(
+              "div",
+              { class: "note" },
+              `Encrypted tunnel — enable SSL Proxying for ${d.host} to see the content.`,
+              h(
+                "div",
+                { style: { marginTop: "10px" } },
+                h(
+                  "button",
+                  { class: "btn primary", onclick: () => enableSSLFor(d.host) },
+                  `Enable SSL Proxying for ${d.host}`,
+                ),
+              ),
+            )
+          : renderBody(
+              resBytes,
+              d.contentType,
+              resModes && resModes.length
+                ? resModes.includes(S.modes.res)
+                  ? S.modes.res
+                  : resModes[0]
+                : "Text",
+            );
+        break;
+      case "Set-Cookie":
+        resBody = setCookieTable(d.resHeaders);
+        break;
+      case "Raw":
+        resBody = rawResponse(d);
+        break;
+      case "Timing":
+        resBody = timingView(d);
+        break;
     }
   }
-  res.replaceChildren(paneHead('Response', 'res', resTabs, resModes), h('div', { class: 'pane-body' }, resBody));
+  res.replaceChildren(
+    paneHead("Response", "res", resTabs, resModes),
+    h("div", { class: "pane-body" }, resBody),
+  );
 }
 
 function summaryView(d) {
   const rows = [
-    ['URL', d.url],
-    d.originalUrl ? ['Original URL', d.originalUrl] : null,
-    ['Method', d.method],
-    ['Status', d.status ? `${d.status} ${d.statusMessage || ''}` : d.state],
-    ['Protocol', `${d.scheme.toUpperCase()} · HTTP/${d.httpVersion}${d.ws ? ' · WebSocket' : ''}${d.upstreamProtocol ? ` · upstream ${d.upstreamProtocol === 'h2' ? 'HTTP/2' : 'HTTP/1.1'}` : ''}`],
-    ['Client', d.app ? `${d.app}${d.appPath ? ` (${d.appPath})` : ''}` : d.clientAddr || '—'],
-    d.app && d.clientAddr ? ['Client address', d.clientAddr] : null,
-    d.via ? ['Upstream proxy', d.via] : null,
-    ['Request size', fmtBytes(b64ToBytes(d.reqBody).length)],
-    ['Response size', fmtBytes(d.resSize)],
-    ['Started', new Date(d.start).toLocaleString()],
-    ['Duration', fmtDuration(d.duration) || '—'],
-    d.tags.length ? ['Tags', d.tags.join(', ')] : null,
-    d.error ? ['Error', d.error] : null,
+    ["URL", d.url],
+    d.originalUrl ? ["Original URL", d.originalUrl] : null,
+    ["Method", d.method],
+    ["Status", d.status ? `${d.status} ${d.statusMessage || ""}` : d.state],
+    [
+      "Protocol",
+      `${d.scheme.toUpperCase()} · HTTP/${d.httpVersion}${d.ws ? " · WebSocket" : ""}${d.upstreamProtocol ? ` · upstream ${d.upstreamProtocol === "h2" ? "HTTP/2" : "HTTP/1.1"}` : ""}`,
+    ],
+    [
+      "Client",
+      d.app
+        ? `${d.app}${d.appPath ? ` (${d.appPath})` : ""}`
+        : d.clientAddr || "—",
+    ],
+    d.app && d.clientAddr ? ["Client address", d.clientAddr] : null,
+    d.via ? ["Upstream proxy", d.via] : null,
+    ["Request size", fmtBytes(b64ToBytes(d.reqBody).length)],
+    ["Response size", fmtBytes(d.resSize)],
+    ["Started", new Date(d.start).toLocaleString()],
+    ["Duration", fmtDuration(d.duration) || "—"],
+    d.tags.length ? ["Tags", d.tags.join(", ")] : null,
+    d.error ? ["Error", d.error] : null,
   ].filter(Boolean);
-  return h('div', null, kvTable(rows),
-    h('div', { class: 'kv-section' }, 'Comment'),
-    h('div', { style: { padding: '2px 10px 10px' } },
-      d.comment ? h('p', { style: { whiteSpace: 'pre-wrap', margin: '0 0 8px' } }, d.comment) : h('p', { class: 'dim', style: { margin: '0 0 8px' } }, 'No comment'),
-      h('span', { class: 'link', onclick: () => openCommentEditor(d.id, d.comment || '') }, d.comment ? 'Edit…' : 'Add comment…')));
+  return h(
+    "div",
+    null,
+    kvTable(rows),
+    h("div", { class: "kv-section" }, "Comment"),
+    h(
+      "div",
+      { style: { padding: "2px 10px 10px" } },
+      d.comment
+        ? h(
+            "p",
+            { style: { whiteSpace: "pre-wrap", margin: "0 0 8px" } },
+            d.comment,
+          )
+        : h("p", { class: "dim", style: { margin: "0 0 8px" } }, "No comment"),
+      h(
+        "span",
+        {
+          class: "link",
+          onclick: () => openCommentEditor(d.id, d.comment || ""),
+        },
+        d.comment ? "Edit…" : "Add comment…",
+      ),
+    ),
+  );
 }
 
 // ---------------- context menus ----------------
 async function rowMenu(id) {
-  if (!S.selected.has(id)) { S.selected = new Set([id]); setFocus(id); }
+  if (!S.selected.has(id)) {
+    S.selected = new Set([id]);
+    setFocus(id);
+  }
   const f = S.flows.get(id);
   const ids = [...S.selected];
   const multi = ids.length > 1;
   const pinned = S.config.pinned.includes(f.host);
-  const action = await rae.invoke('contextMenu', [
-    { id: 'copy-url', label: multi ? `Copy ${ids.length} URLs` : 'Copy URL' },
-    { id: 'copy-curl', label: 'Copy as cURL', enabled: !multi && !f.tunnel },
-    { id: 'copy-body', label: 'Copy Response Body', enabled: !multi && !f.tunnel },
-    { type: 'separator' },
-    { id: 'repeat', label: multi ? `Repeat ${ids.length} Requests` : 'Repeat', enabled: !f.tunnel },
-    { id: 'repeat-adv', label: 'Repeat Advanced…', enabled: !f.tunnel },
-    { id: 'edit', label: 'Edit and Repeat…', enabled: !multi && !f.tunnel },
-    { id: 'compare', label: 'Compare 2 Requests…', enabled: ids.length === 2 },
-    { type: 'separator' },
+  const action = await rae.invoke("contextMenu", [
+    { id: "copy-url", label: multi ? `Copy ${ids.length} URLs` : "Copy URL" },
+    { id: "copy-curl", label: "Copy as cURL", enabled: !multi && !f.tunnel },
     {
-      label: 'Color', submenu: [
-        { id: 'color-none', label: 'None' },
-        ...FLOW_COLORS.map(([key]) => ({ id: `color-${key}`, label: key[0].toUpperCase() + key.slice(1) })),
+      id: "copy-body",
+      label: "Copy Response Body",
+      enabled: !multi && !f.tunnel,
+    },
+    { type: "separator" },
+    {
+      id: "repeat",
+      label: multi ? `Repeat ${ids.length} Requests` : "Repeat",
+      enabled: !f.tunnel,
+    },
+    { id: "repeat-adv", label: "Repeat Advanced…", enabled: !f.tunnel },
+    { id: "edit", label: "Edit and Repeat…", enabled: !multi && !f.tunnel },
+    { id: "compare", label: "Compare 2 Requests…", enabled: ids.length === 2 },
+    { type: "separator" },
+    {
+      label: "Color",
+      submenu: [
+        { id: "color-none", label: "None" },
+        ...FLOW_COLORS.map(([key]) => ({
+          id: `color-${key}`,
+          label: key[0].toUpperCase() + key.slice(1),
+        })),
       ],
     },
-    { id: 'comment', label: f.comment ? 'Edit Comment…' : 'Add Comment…', enabled: !multi },
-    { type: 'separator' },
     {
-      label: 'Tools', submenu: [
-        { id: 'tool-bp', label: 'Breakpoint…' },
-        { id: 'tool-ml', label: 'Map Local (use this response)…', enabled: !f.tunnel },
-        { id: 'tool-mr', label: 'Map Remote…' },
-        { id: 'tool-rw', label: 'Rewrite…' },
-        { id: 'tool-sc', label: 'Scripting…' },
-        { id: 'tool-block', label: 'Block List…' },
-        { id: 'tool-allow', label: 'Allow List…' },
+      id: "comment",
+      label: f.comment ? "Edit Comment…" : "Add Comment…",
+      enabled: !multi,
+    },
+    { type: "separator" },
+    {
+      label: "Tools",
+      submenu: [
+        { id: "tool-bp", label: "Breakpoint…" },
+        {
+          id: "tool-ml",
+          label: "Map Local (use this response)…",
+          enabled: !f.tunnel,
+        },
+        { id: "tool-mr", label: "Map Remote…" },
+        { id: "tool-rw", label: "Rewrite…" },
+        { id: "tool-sc", label: "Scripting…" },
+        { id: "tool-block", label: "Block List…" },
+        { id: "tool-allow", label: "Allow List…" },
       ],
     },
-    f.tunnel || !(S.config.ssl.interceptAll || S.config.ssl.include.length) || f.scheme === 'http'
-      ? { id: 'ssl-on', label: `Enable SSL Proxying for ${f.host}`, enabled: f.scheme === 'https' }
-      : { id: 'ssl-off', label: `Disable SSL Proxying for ${f.host}` },
-    { id: 'pin', label: pinned ? `Unpin ${f.host}` : `Pin ${f.host}` },
-    { type: 'separator' },
-    { id: 'save-body', label: 'Save Response Body…', enabled: !multi && !f.tunnel },
-    { id: 'har', label: multi ? `Export ${ids.length} as HAR…` : 'Export as HAR…' },
-    { type: 'separator' },
-    { id: 'delete', label: multi ? `Delete ${ids.length}` : 'Delete' },
+    f.tunnel ||
+    !(S.config.ssl.interceptAll || S.config.ssl.include.length) ||
+    f.scheme === "http"
+      ? {
+          id: "ssl-on",
+          label: `Enable SSL Proxying for ${f.host}`,
+          enabled: f.scheme === "https",
+        }
+      : { id: "ssl-off", label: `Disable SSL Proxying for ${f.host}` },
+    { id: "pin", label: pinned ? `Unpin ${f.host}` : `Pin ${f.host}` },
+    { type: "separator" },
+    {
+      id: "save-body",
+      label: "Save Response Body…",
+      enabled: !multi && !f.tunnel,
+    },
+    {
+      id: "har",
+      label: multi ? `Export ${ids.length} as HAR…` : "Export as HAR…",
+    },
+    { type: "separator" },
+    { id: "delete", label: multi ? `Delete ${ids.length}` : "Delete" },
   ]);
   if (!action) return;
-  if (action.startsWith('color-')) {
+  if (action.startsWith("color-")) {
     const color = action.slice(6);
-    for (const i of ids) S.flows.get(i).color = color === 'none' ? null : color;
-    rae.invoke('flow:setMeta', { ids, color: color === 'none' ? null : color });
+    for (const i of ids) S.flows.get(i).color = color === "none" ? null : color;
+    rae.invoke("flow:setMeta", { ids, color: color === "none" ? null : color });
     scheduleRender(false);
     return;
   }
-  if (action === 'comment') return openCommentEditor(id, f.comment || '');
-  const d = !multi ? await rae.invoke('flow:get', id) : null;
-  const pathPattern = f.url.split('?')[0] + (f.url.includes('?') ? '*' : '');
+  if (action === "comment") return openCommentEditor(id, f.comment || "");
+  const d = !multi ? await rae.invoke("flow:get", id) : null;
+  const pathPattern = f.url.split("?")[0] + (f.url.includes("?") ? "*" : "");
   switch (action) {
-    case 'copy-url': rae.invoke('clipboard:write', ids.map((i) => S.flows.get(i)?.url).join('\n')); toast('Copied'); break;
-    case 'copy-curl': rae.invoke('clipboard:write', toCurl(d)); toast('cURL copied'); break;
-    case 'copy-body': rae.invoke('clipboard:write', d.resBody ? bytesToText(b64ToBytes(d.resBody)) : ''); toast('Body copied'); break;
-    case 'repeat': for (const i of ids) rae.invoke('flow:repeat', i); break;
-    case 'repeat-adv': openRepeatAdvanced(ids); break;
-    case 'edit': openComposeFrom(id); break;
-    case 'compare': openCompare(ids[0], ids[1]); break;
-    case 'tool-bp': openTools('breakpoints', { name: f.host + f.path.split('?')[0], pattern: pathPattern, method: f.method }); break;
-    case 'tool-ml': {
-      const ct = header(d.resHeaders, 'content-type');
+    case "copy-url":
+      rae.invoke(
+        "clipboard:write",
+        ids.map((i) => S.flows.get(i)?.url).join("\n"),
+      );
+      toast("Copied");
+      break;
+    case "copy-curl":
+      rae.invoke("clipboard:write", toCurl(d));
+      toast("cURL copied");
+      break;
+    case "copy-body":
+      rae.invoke(
+        "clipboard:write",
+        d.resBody ? bytesToText(b64ToBytes(d.resBody)) : "",
+      );
+      toast("Body copied");
+      break;
+    case "repeat":
+      for (const i of ids) rae.invoke("flow:repeat", i);
+      break;
+    case "repeat-adv":
+      openRepeatAdvanced(ids);
+      break;
+    case "edit":
+      openComposeFrom(id);
+      break;
+    case "compare":
+      openCompare(ids[0], ids[1]);
+      break;
+    case "tool-bp":
+      openTools("breakpoints", {
+        name: f.host + f.path.split("?")[0],
+        pattern: pathPattern,
+        method: f.method,
+      });
+      break;
+    case "tool-ml": {
+      const ct = header(d.resHeaders, "content-type");
       const bytes = d.resBody ? b64ToBytes(d.resBody) : new Uint8Array();
       const textual = !looksBinary(bytes);
-      const filePath = textual ? '' : await rae.invoke('mapLocal:saveBody', { id });
-      openTools('mapLocal', {
-        name: f.host + f.path.split('?')[0], pattern: pathPattern, method: f.method, status: d.status || 200,
-        headers: (d.resHeaders || []).filter(([k]) => !/^(content-length|content-encoding|transfer-encoding|connection|date)$/i.test(k)).map(([k, v]) => `${k}: ${v}`).join('\n') || (ct ? `Content-Type: ${ct}` : ''),
-        body: textual ? prettyMaybe(bytesToText(bytes)) : '', filePath: filePath || '',
+      const filePath = textual
+        ? ""
+        : await rae.invoke("mapLocal:saveBody", { id });
+      openTools("mapLocal", {
+        name: f.host + f.path.split("?")[0],
+        pattern: pathPattern,
+        method: f.method,
+        status: d.status || 200,
+        headers:
+          (d.resHeaders || [])
+            .filter(
+              ([k]) =>
+                !/^(content-length|content-encoding|transfer-encoding|connection|date)$/i.test(
+                  k,
+                ),
+            )
+            .map(([k, v]) => `${k}: ${v}`)
+            .join("\n") || (ct ? `Content-Type: ${ct}` : ""),
+        body: textual ? prettyMaybe(bytesToText(bytes)) : "",
+        filePath: filePath || "",
       });
       break;
     }
-    case 'tool-mr': openTools('mapRemote', { name: f.host, pattern: `${f.scheme}://${f.host}${f.port ? ':' + f.port : ''}/*` }); break;
-    case 'tool-rw': openTools('rewrite', { name: f.host + f.path.split('?')[0], pattern: pathPattern }); break;
-    case 'tool-sc': openTools('scripting', { name: f.host + f.path.split('?')[0], pattern: pathPattern }); break;
-    case 'tool-block': openTools('blockList', { name: f.host, pattern: `*://${f.host}/*` }); break;
-    case 'tool-allow': openTools('allowList', { name: f.host, pattern: `*://${f.host}/*` }); break;
-    case 'ssl-on': enableSSLFor(f.host); break;
-    case 'ssl-off': disableSSLFor(f.host); break;
-    case 'pin': togglePin(f.host); break;
-    case 'save-body': rae.invoke('body:save', { id, which: 'response' }); break;
-    case 'har': rae.invoke('har:export', ids); break;
-    case 'delete': deleteFlows(ids); break;
+    case "tool-mr":
+      openTools("mapRemote", {
+        name: f.host,
+        pattern: `${f.scheme}://${f.host}${f.port ? ":" + f.port : ""}/*`,
+      });
+      break;
+    case "tool-rw":
+      openTools("rewrite", {
+        name: f.host + f.path.split("?")[0],
+        pattern: pathPattern,
+      });
+      break;
+    case "tool-sc":
+      openTools("scripting", {
+        name: f.host + f.path.split("?")[0],
+        pattern: pathPattern,
+      });
+      break;
+    case "tool-block":
+      openTools("blockList", { name: f.host, pattern: `*://${f.host}/*` });
+      break;
+    case "tool-allow":
+      openTools("allowList", { name: f.host, pattern: `*://${f.host}/*` });
+      break;
+    case "ssl-on":
+      enableSSLFor(f.host);
+      break;
+    case "ssl-off":
+      disableSSLFor(f.host);
+      break;
+    case "pin":
+      togglePin(f.host);
+      break;
+    case "save-body":
+      rae.invoke("body:save", { id, which: "response" });
+      break;
+    case "har":
+      rae.invoke("har:export", ids);
+      break;
+    case "delete":
+      deleteFlows(ids);
+      break;
   }
 }
 
 async function hostMenu(host) {
   const pinned = S.config.pinned.includes(host);
-  const action = await rae.invoke('contextMenu', [
-    { id: 'pin', label: pinned ? 'Unpin' : 'Pin' },
-    { id: 'ssl-on', label: 'Enable SSL Proxying' },
-    { id: 'ssl-off', label: 'Disable SSL Proxying' },
-    { type: 'separator' },
-    { id: 'block', label: 'Block this domain…' },
-    { id: 'map-remote', label: 'Map Remote…' },
-    { type: 'separator' },
-    { id: 'copy', label: 'Copy Domain' },
-    { id: 'delete', label: 'Remove all requests from this domain' },
+  const action = await rae.invoke("contextMenu", [
+    { id: "pin", label: pinned ? "Unpin" : "Pin" },
+    { id: "ssl-on", label: "Enable SSL Proxying" },
+    { id: "ssl-off", label: "Disable SSL Proxying" },
+    { type: "separator" },
+    { id: "block", label: "Block this domain…" },
+    { id: "map-remote", label: "Map Remote…" },
+    { type: "separator" },
+    { id: "copy", label: "Copy Domain" },
+    { id: "delete", label: "Remove all requests from this domain" },
   ]);
   switch (action) {
-    case 'pin': togglePin(host); break;
-    case 'ssl-on': enableSSLFor(host); break;
-    case 'ssl-off': disableSSLFor(host); break;
-    case 'block': openTools('blockList', { name: host, pattern: `*://${host}/*` }); break;
-    case 'map-remote': openTools('mapRemote', { name: host, pattern: `*://${host}/*` }); break;
-    case 'copy': rae.invoke('clipboard:write', host); break;
-    case 'delete': deleteFlows([...S.flows.values()].filter((f) => f.host === host).map((f) => f.id)); break;
+    case "pin":
+      togglePin(host);
+      break;
+    case "ssl-on":
+      enableSSLFor(host);
+      break;
+    case "ssl-off":
+      disableSSLFor(host);
+      break;
+    case "block":
+      openTools("blockList", { name: host, pattern: `*://${host}/*` });
+      break;
+    case "map-remote":
+      openTools("mapRemote", { name: host, pattern: `*://${host}/*` });
+      break;
+    case "copy":
+      rae.invoke("clipboard:write", host);
+      break;
+    case "delete":
+      deleteFlows(
+        [...S.flows.values()].filter((f) => f.host === host).map((f) => f.id),
+      );
+      break;
   }
 }
 
 function togglePin(host) {
-  const pinned = S.config.pinned.includes(host) ? S.config.pinned.filter((p) => p !== host) : [...S.config.pinned, host];
+  const pinned = S.config.pinned.includes(host)
+    ? S.config.pinned.filter((p) => p !== host)
+    : [...S.config.pinned, host];
   saveConfig({ pinned }).then(renderSidebar);
 }
 
@@ -719,10 +1248,17 @@ function disableSSLFor(host) {
 }
 
 async function openComposeFrom(id) {
-  const d = await rae.invoke('flow:get', id);
+  const d = await rae.invoke("flow:get", id);
   if (!d || d.tunnel) return;
   const bytes = b64ToBytes(d.reqBody);
-  openCompose({ method: d.method, url: d.url, headers: d.reqHeaders.filter(([k]) => !/^(content-length|proxy-connection)$/i.test(k)), body: looksBinary(bytes) ? '' : bytesToText(bytes) });
+  openCompose({
+    method: d.method,
+    url: d.url,
+    headers: d.reqHeaders.filter(
+      ([k]) => !/^(content-length|proxy-connection)$/i.test(k),
+    ),
+    body: looksBinary(bytes) ? "" : bytesToText(bytes),
+  });
 }
 
 // ---------------- chrome: toolbar / banner / status ----------------
@@ -733,68 +1269,135 @@ function activeRules(key) {
 
 function updateChrome() {
   const c = S.config;
-  $('#btn-record').classList.toggle('on', c.recording);
-  $('#btn-sysproxy').classList.toggle('on', S.systemProxy);
-  $('#btn-throttle').classList.toggle('on', c.throttle.enabled);
-  $('#btn-throttle').textContent = c.throttle.enabled ? `Throttle: ${c.throttle.preset || 'Custom'}` : 'Throttle';
-  $('#btn-breakpoints').classList.toggle('on', activeRules('breakpoints') > 0);
-  $('#btn-scripting').classList.toggle('on', activeRules('scripting') > 0);
+  $("#btn-record").classList.toggle("on", c.recording);
+  $("#btn-sysproxy").classList.toggle("on", S.systemProxy);
+  $("#btn-throttle").classList.toggle("on", c.throttle.enabled);
+  $("#btn-throttle").textContent = c.throttle.enabled
+    ? `Throttle: ${c.throttle.preset || "Custom"}`
+    : "Throttle";
+  $("#btn-breakpoints").classList.toggle("on", activeRules("breakpoints") > 0);
+  $("#btn-scripting").classList.toggle("on", activeRules("scripting") > 0);
 
   const p = S.proxy;
   const addrs = (p.addresses || []).map((a) => a.address);
-  $('#proxy-addr').textContent = p.running
-    ? `Listening on 127.0.0.1:${p.port}${c.listenAll && addrs.length ? ' · ' + addrs.map((a) => `${a}:${p.port}`).join(' · ') : ''}`
-    : `Not running${p.error ? ' — ' + p.error : ''}`;
-  $('#empty-addr').textContent = `127.0.0.1:${p.port || c.port}`;
+  $("#proxy-addr").textContent = p.running
+    ? `Listening on 127.0.0.1:${p.port}${c.listenAll && addrs.length ? " · " + addrs.map((a) => `${a}:${p.port}`).join(" · ") : ""}`
+    : `Not running${p.error ? " — " + p.error : ""}`;
+  $("#empty-addr").textContent = `127.0.0.1:${p.port || c.port}`;
 
-  const banner = $('#banner');
+  const banner = $("#banner");
   if (!p.running) {
-    banner.className = 'banner err';
-    banner.replaceChildren(h('span', null, `⚠︎ Proxy is not running: ${p.error || 'unknown error'}`), h('button', { class: 'btn small', onclick: () => openTools('general') }, 'Change Port'), h('button', { class: 'btn small', onclick: async () => { S.proxy = { ...(await rae.invoke('proxy:restart')), addresses: S.proxy.addresses }; updateChrome(); } }, 'Retry'));
-  } else if (!S.ca.trusted && !c.dismissCABanner) {
-    banner.className = 'banner';
+    banner.className = "banner err";
     banner.replaceChildren(
-      h('span', null, '🔐 The Rae Proxy root certificate is not trusted on this Mac yet — HTTPS requests from this Mac can’t be decrypted.'),
-      h('button', { class: 'btn small primary', onclick: () => openTools('certificate') }, 'Install Certificate…'),
-      h('span', { class: 'grow' }),
-      h('button', { class: 'btn small', onclick: () => saveConfig({ dismissCABanner: true }) }, 'Dismiss'));
-  } else banner.className = 'banner hidden';
+      h("span", null, `⚠︎ Proxy is not running: ${p.error || "unknown error"}`),
+      h(
+        "button",
+        { class: "btn small", onclick: () => openTools("general") },
+        "Change Port",
+      ),
+      h(
+        "button",
+        {
+          class: "btn small",
+          onclick: async () => {
+            S.proxy = {
+              ...(await rae.invoke("proxy:restart")),
+              addresses: S.proxy.addresses,
+            };
+            updateChrome();
+          },
+        },
+        "Retry",
+      ),
+    );
+  } else if (!S.ca.trusted && !c.dismissCABanner) {
+    banner.className = "banner";
+    banner.replaceChildren(
+      h(
+        "span",
+        null,
+        "🔐 The Rae Proxy root certificate is not trusted on this Mac yet — HTTPS requests from this Mac can’t be decrypted.",
+      ),
+      h(
+        "button",
+        { class: "btn small primary", onclick: () => openTools("certificate") },
+        "Install Certificate…",
+      ),
+      h("span", { class: "grow" }),
+      h(
+        "button",
+        {
+          class: "btn small",
+          onclick: () => saveConfig({ dismissCABanner: true }),
+        },
+        "Dismiss",
+      ),
+    );
+  } else banner.className = "banner hidden";
 
   const flags = [];
   if (c.throttle.enabled) flags.push(`Throttle ${c.throttle.latency}ms`);
-  if (c.noCache) flags.push('No Caching');
-  if (c.upstreamProxy.enabled && c.upstreamProxy.host) flags.push(`Upstream ${c.upstreamProxy.host}:${c.upstreamProxy.port}`);
-  if (!c.http2) flags.push('HTTP/2 off');
-  for (const [k, label] of [['breakpoints', 'Breakpoints'], ['mapLocal', 'Map Local'], ['mapRemote', 'Map Remote'], ['rewrite', 'Rewrite'], ['scripting', 'Scripts'], ['blockList', 'Block'], ['allowList', 'Allow']]) {
+  if (c.noCache) flags.push("No Caching");
+  if (c.upstreamProxy.enabled && c.upstreamProxy.host)
+    flags.push(`Upstream ${c.upstreamProxy.host}:${c.upstreamProxy.port}`);
+  if (!c.http2) flags.push("HTTP/2 off");
+  for (const [k, label] of [
+    ["breakpoints", "Breakpoints"],
+    ["mapLocal", "Map Local"],
+    ["mapRemote", "Map Remote"],
+    ["rewrite", "Rewrite"],
+    ["scripting", "Scripts"],
+    ["blockList", "Block"],
+    ["allowList", "Allow"],
+  ]) {
     const n = activeRules(k);
     if (n) flags.push(`${label} ${n}`);
   }
-  $('#sb-flags').replaceChildren(...flags.map((f) => h('span', { class: 'flag' }, f)));
-  $('#sb-cert').textContent = S.ca.trusted ? '🔐 Certificate trusted' : '⚠︎ Certificate not trusted';
-  $('#sb-cert').style.color = S.ca.trusted ? 'var(--ok)' : 'var(--warn)';
+  $("#sb-flags").replaceChildren(
+    ...flags.map((f) => h("span", { class: "flag" }, f)),
+  );
+  $("#sb-cert").textContent = S.ca.trusted
+    ? "🔐 Certificate trusted"
+    : "⚠︎ Certificate not trusted";
+  $("#sb-cert").style.color = S.ca.trusted ? "var(--ok)" : "var(--warn)";
 }
 
 function renderStatus() {
-  $('#sb-count').textContent = `${S.flows.size.toLocaleString()} requests`;
-  $('#sb-filter').textContent = S.view.length !== S.flows.size ? `${S.view.length.toLocaleString()} shown` : '';
+  $("#sb-count").textContent = `${S.flows.size.toLocaleString()} requests`;
+  $("#sb-filter").textContent =
+    S.view.length !== S.flows.size
+      ? `${S.view.length.toLocaleString()} shown`
+      : "";
 }
 
 async function toggleSystemProxy() {
   try {
-    S.systemProxy = await rae.invoke('systemProxy:set', !S.systemProxy);
-    toast(S.systemProxy ? 'This Mac now routes HTTP/HTTPS through Rae Proxy' : 'System proxy disabled');
+    S.systemProxy = await rae.invoke("systemProxy:set", !S.systemProxy);
+    toast(
+      S.systemProxy
+        ? "This Mac now routes HTTP/HTTPS through Rae Proxy"
+        : "System proxy disabled",
+    );
   } catch (e) {
-    toast('Could not change system proxy: ' + e.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, ''));
+    toast(
+      "Could not change system proxy: " +
+        e.message.replace(
+          /^Error invoking remote method '[^']+': (Error: )?/,
+          "",
+        ),
+    );
   }
   updateChrome();
 }
 
 async function clearSession() {
   if (S.sessionTabs.length > 1) {
-    const ids = [...S.flowTab.entries()].filter(([, t]) => t === S.activeSessionTab).map(([fid]) => fid);
+    const ids = [...S.flowTab.entries()]
+      .filter(([, t]) => t === S.activeSessionTab)
+      .map(([fid]) => fid);
     return deleteFlows(ids);
   }
-  await rae.invoke('flows:clear');
+  await rae.invoke("flows:clear");
   S.flows.clear();
   S.flowTab.clear();
   S.selected.clear();
@@ -805,82 +1408,106 @@ async function clearSession() {
   scheduleRender();
 }
 
-$('#btn-record').onclick = () => saveConfig({ recording: !S.config.recording });
-$('#btn-clear').onclick = clearSession;
-$('#btn-sysproxy').onclick = toggleSystemProxy;
-$('#btn-throttle').onclick = () => saveConfig({ throttle: { enabled: !S.config.throttle.enabled } });
-$('#btn-throttle').oncontextmenu = () => openTools('throttle');
-$('#btn-breakpoints').onclick = () => openTools('breakpoints');
-$('#btn-scripting').onclick = () => openTools('scripting');
-$('#btn-compose').onclick = () => openCompose();
-$('#btn-tools').onclick = () => openTools('ssl');
-$('#sb-cert').onclick = () => openTools('certificate');
+$("#btn-record").onclick = () => saveConfig({ recording: !S.config.recording });
+$("#btn-clear").onclick = clearSession;
+$("#btn-sysproxy").onclick = toggleSystemProxy;
+$("#btn-throttle").onclick = () =>
+  saveConfig({ throttle: { enabled: !S.config.throttle.enabled } });
+$("#btn-throttle").oncontextmenu = () => openTools("throttle");
+$("#btn-breakpoints").onclick = () => openTools("breakpoints");
+$("#btn-scripting").onclick = () => openTools("scripting");
+$("#btn-compose").onclick = () => openCompose();
+$("#btn-tools").onclick = () => openTools("ssl");
+$("#sb-cert").onclick = () => openTools("certificate");
 
 // ---------------- console ----------------
 function logLine(entry) {
-  const body = $('#console-body');
-  body.append(h('div', { class: entry.level }, h('span', { class: 'src' }, `${fmtTime(entry.time || Date.now())} [${entry.source || 'proxy'}]`), entry.message));
+  const body = $("#console-body");
+  body.append(
+    h(
+      "div",
+      { class: entry.level },
+      h(
+        "span",
+        { class: "src" },
+        `${fmtTime(entry.time || Date.now())} [${entry.source || "proxy"}]`,
+      ),
+      entry.message,
+    ),
+  );
   while (body.childElementCount > 2000) body.firstChild.remove();
   body.scrollTop = body.scrollHeight;
 }
-const toggleConsole = () => $('#console').classList.toggle('hidden');
-$('#sb-console').onclick = toggleConsole;
-$('#console-close').onclick = toggleConsole;
-$('#console-clear').onclick = () => $('#console-body').replaceChildren();
+const toggleConsole = () => $("#console").classList.toggle("hidden");
+$("#sb-console").onclick = toggleConsole;
+$("#console-close").onclick = toggleConsole;
+$("#console-clear").onclick = () => $("#console-body").replaceChildren();
 
 // ---------------- splitters ----------------
 function dragSplit(handle, onMove) {
-  handle.addEventListener('mousedown', (e) => {
+  handle.addEventListener("mousedown", (e) => {
     e.preventDefault();
     const move = (ev) => onMove(ev);
-    const up = () => { document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); };
-    document.addEventListener('mousemove', move);
-    document.addEventListener('mouseup', up);
+    const up = () => {
+      document.removeEventListener("mousemove", move);
+      document.removeEventListener("mouseup", up);
+    };
+    document.addEventListener("mousemove", move);
+    document.addEventListener("mouseup", up);
   });
 }
-dragSplit($('.vsplit'), (e) => { $('#sidebar').style.width = Math.max(150, Math.min(500, e.clientX)) + 'px'; });
-dragSplit($('#hsplit'), (e) => {
-  const rect = $('#center').getBoundingClientRect();
-  $('#detail').style.height = Math.max(120, Math.min(rect.height - 140, rect.bottom - e.clientY)) + 'px';
+dragSplit($(".vsplit"), (e) => {
+  $("#sidebar").style.width = Math.max(150, Math.min(500, e.clientX)) + "px";
 });
-dragSplit($('.psplit'), (e) => {
-  const d = $('#detail');
+dragSplit($("#hsplit"), (e) => {
+  const rect = $("#center").getBoundingClientRect();
+  $("#detail").style.height =
+    Math.max(120, Math.min(rect.height - 140, rect.bottom - e.clientY)) + "px";
+});
+dragSplit($(".psplit"), (e) => {
+  const d = $("#detail");
   const rect = d.getBoundingClientRect();
-  const ratio = d.classList.contains('vertical') ? (e.clientY - rect.top) / rect.height : (e.clientX - rect.left) / rect.width;
+  const ratio = d.classList.contains("vertical")
+    ? (e.clientY - rect.top) / rect.height
+    : (e.clientX - rect.left) / rect.width;
   const r = Math.max(0.15, Math.min(0.85, ratio));
-  $('#pane-req').style.flex = `${r}`;
-  $('#pane-res').style.flex = `${1 - r}`;
+  $("#pane-req").style.flex = `${r}`;
+  $("#pane-res").style.flex = `${1 - r}`;
 });
 
 // ---------------- menu + IPC events ----------------
 const MENU = {
-  settings: () => openTools('general'),
+  settings: () => openTools("general"),
   compose: () => openCompose(),
   clear: clearSession,
-  'session:open': () => rae.invoke('har:import'),
-  'session:save': () => rae.invoke('session:save'),
-  'har:import': () => rae.invoke('har:import'),
-  'har:export': () => rae.invoke('har:export', null),
-  'focus-filter': () => $('#filter').focus(),
-  'toggle-sidebar': () => $('#sidebar').classList.toggle('collapsed'),
-  'toggle-layout': () => $('#detail').classList.toggle('vertical'),
-  'toggle-recording': () => saveConfig({ recording: !S.config.recording }),
-  'toggle-system-proxy': toggleSystemProxy,
-  'toggle-throttle': () => saveConfig({ throttle: { enabled: !S.config.throttle.enabled } }),
-  'toggle-nocache': () => saveConfig({ noCache: !S.config.noCache }),
+  "session:open": () => rae.invoke("har:import"),
+  "session:save": () => rae.invoke("session:save"),
+  "har:import": () => rae.invoke("har:import"),
+  "har:export": () => rae.invoke("har:export", null),
+  "focus-filter": () => $("#filter").focus(),
+  "toggle-sidebar": () => $("#sidebar").classList.toggle("collapsed"),
+  "toggle-layout": () => $("#detail").classList.toggle("vertical"),
+  "toggle-recording": () => saveConfig({ recording: !S.config.recording }),
+  "toggle-system-proxy": toggleSystemProxy,
+  "toggle-throttle": () =>
+    saveConfig({ throttle: { enabled: !S.config.throttle.enabled } }),
+  "toggle-nocache": () => saveConfig({ noCache: !S.config.noCache }),
   console: toggleConsole,
-  'cert:install': () => openTools('certificate'),
-  'cert:device': () => openTools('certificate'),
-  'cert:export': () => rae.invoke('ca:export'),
-  'cert:regenerate': async () => { S.ca = await rae.invoke('ca:regenerate'); updateChrome(); },
+  "cert:install": () => openTools("certificate"),
+  "cert:device": () => openTools("certificate"),
+  "cert:export": () => rae.invoke("ca:export"),
+  "cert:regenerate": async () => {
+    S.ca = await rae.invoke("ca:regenerate");
+    updateChrome();
+  },
 };
 
-rae.on('menu', (action) => {
-  if (action.startsWith('tool:')) return openTools(action.slice(5));
+rae.on("menu", (action) => {
+  if (action.startsWith("tool:")) return openTools(action.slice(5));
   MENU[action] && MENU[action]();
 });
 
-rae.on('flows:update', (list) => {
+rae.on("flows:update", (list) => {
   let hostsChanged = false;
   for (const f of list) {
     if (!S.flows.has(f.id)) hostsChanged = true;
@@ -891,30 +1518,39 @@ rae.on('flows:update', (list) => {
   if (hostsChanged) scheduleSidebar();
   scheduleRender();
 });
-rae.on('flows:reset', (list) => {
+rae.on("flows:reset", (list) => {
   S.flows = new Map(list.map((f) => [f.id, f]));
   for (const f of list) assignNewFlow(f.id);
   renderSidebar();
   scheduleRender();
 });
-rae.on('breakpoint:hit', enqueueBreakpoint);
-rae.on('client:blocked', promptClient);
-rae.on('apps:icon', ({ name, icon }) => {
+rae.on("breakpoint:hit", enqueueBreakpoint);
+rae.on("client:blocked", promptClient);
+rae.on("apps:icon", ({ name, icon }) => {
   S.appIcons[name] = icon;
   scheduleSidebar();
   scheduleRender(false);
 });
-rae.on('script:log', (entry) => {
+rae.on("script:log", (entry) => {
   logLine(entry);
-  if (entry.level === 'error') $('#console').classList.remove('hidden');
+  if (entry.level === "error") $("#console").classList.remove("hidden");
 });
-rae.on('proxy:status', (p) => { S.proxy = p; updateChrome(); });
-rae.on('systemProxy:status', (on) => { S.systemProxy = on; updateChrome(); });
+rae.on("proxy:status", (p) => {
+  S.proxy = p;
+  updateChrome();
+});
+rae.on("systemProxy:status", (on) => {
+  S.systemProxy = on;
+  updateChrome();
+});
 
 // ---------------- boot ----------------
 (async () => {
   const st = await refreshState();
-  for (const f of st.flows) { S.flows.set(f.id, f); assignNewFlow(f.id); }
+  for (const f of st.flows) {
+    S.flows.set(f.id, f);
+    assignNewFlow(f.id);
+  }
   renderHead();
   renderChips();
   renderSessionTabs();
@@ -923,8 +1559,14 @@ rae.on('systemProxy:status', (on) => { S.systemProxy = on; updateChrome(); });
   updateChrome();
   scheduleRender();
   // Re-check certificate trust when the window regains focus (user may have trusted it in Keychain Access).
-  window.addEventListener('focus', debounce(async () => {
-    const ca = await rae.invoke('ca:info');
-    if (ca.trusted !== S.ca.trusted) { S.ca = ca; updateChrome(); }
-  }, 300));
+  window.addEventListener(
+    "focus",
+    debounce(async () => {
+      const ca = await rae.invoke("ca:info");
+      if (ca.trusted !== S.ca.trusted) {
+        S.ca = ca;
+        updateChrome();
+      }
+    }, 300),
+  );
 })();
