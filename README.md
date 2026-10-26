@@ -36,6 +36,8 @@ The default proxy port is `9090`. The root CA is stored in `~/Library/Applicatio
 
 If you're coming from Charles, this table shows where each feature lives in Rae Proxy. Each feature links to its section in [How to use each feature](#how-to-use-each-feature).
 
+Charles Proxy and Proxyman are trademarks of their respective owners; Rae Proxy is an independent project and is not affiliated with or endorsed by either.
+
 | Rae Proxy | Charles Proxy | Notes |
 |---|---|---|
 | [Recording](#recording) | Start / Stop Recording | Same idea: red dot in the toolbar, `⌘R` |
