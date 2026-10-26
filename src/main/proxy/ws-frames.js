@@ -1,5 +1,12 @@
 // Passive WebSocket frame parser: observes a byte stream and reports messages.
-const OPCODES = { 0: 'continuation', 1: 'text', 2: 'binary', 8: 'close', 9: 'ping', 10: 'pong' };
+const OPCODES = {
+  0: "continuation",
+  1: "text",
+  2: "binary",
+  8: "close",
+  9: "ping",
+  10: "pong",
+};
 
 class FrameParser {
   constructor(onMessage, maxPayload = 1024 * 1024) {
@@ -45,7 +52,8 @@ class FrameParser {
     }
     if (b.length < off + len) return false;
     let payload = Buffer.from(b.subarray(off, off + len));
-    if (masked) for (let i = 0; i < payload.length; i++) payload[i] ^= mask[i & 3];
+    if (masked)
+      for (let i = 0; i < payload.length; i++) payload[i] ^= mask[i & 3];
     this.buf = b.subarray(off + len);
 
     if (opcode === 0 && this.fragments) {
@@ -71,8 +79,9 @@ class FrameParser {
       type,
       length: payload.length,
       truncated,
-      text: type === 'text' || type === 'close' ? data.toString('utf8') : undefined,
-      base64: type === 'binary' ? data.toString('base64') : undefined,
+      text:
+        type === "text" || type === "close" ? data.toString("utf8") : undefined,
+      base64: type === "binary" ? data.toString("base64") : undefined,
     });
   }
 }

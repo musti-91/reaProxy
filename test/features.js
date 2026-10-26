@@ -301,6 +301,28 @@ const listen = (srv) => new Promise((r) => srv.listen(0, '127.0.0.1', () => r(sr
     config.set({ upstreamProxy: { enabled: false } });
   });
 
+  // ---------- rewrite tool ----------
+  await check('Rewrite: sets a request header and the response status without any code', async () => {
+    config.set({
+      rewrite: {
+        enabled: true,
+        rules: [{
+          id: 'rw1', enabled: true, name: 'test', pattern: '*/rewrite-test', matchType: 'wildcard', method: 'ANY',
+          actions: [
+            { id: 'a1', phase: 'request', type: 'header', op: 'set', name: 'X-Debug', value: '1' },
+            { id: 'a2', phase: 'response', type: 'status', value: '201' },
+          ],
+        }],
+      },
+    });
+    const r = await h1ViaProxy(`https://localhost:${h1p}/rewrite-test`);
+    assert.strictEqual(r.status, 201, 'response status rewritten');
+    const f = lastFlow((x) => x.url.endsWith('/rewrite-test'));
+    assert.ok(f.reqHeaders.some(([k, v]) => k === 'X-Debug' && v === '1'), 'request header injected');
+    assert.ok(f.tags.includes('rewrite'));
+    config.set({ rewrite: { enabled: true, rules: [] } });
+  });
+
   // ---------- app names ----------
   await check('App helpers: bundle name from executable path', async () => {
     assert.deepStrictEqual(appFromPath('/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Helpers/Google Chrome Helper.app/Contents/MacOS/Google Chrome Helper'), { name: 'Google Chrome', bundle: '/Applications/Google Chrome.app' });

@@ -1,13 +1,16 @@
 // Keeps captured bodies out of RAM: small bodies stay inline, larger ones are
 // appended to a single session file and read back on demand.
-const fs = require('fs');
-const path = require('path');
+const fs = require("fs");
+const path = require("path");
 
 class BodyStore {
-  constructor(file, { inlineMax = 8 * 1024, compactMinBytes = 256 * 1024 * 1024 } = {}) {
+  constructor(
+    file,
+    { inlineMax = 8 * 1024, compactMinBytes = 256 * 1024 * 1024 } = {},
+  ) {
     fs.mkdirSync(path.dirname(file), { recursive: true });
     this.file = file;
-    this.fd = fs.openSync(file, 'w+');
+    this.fd = fs.openSync(file, "w+");
     this.offset = 0;
     this.inlineMax = inlineMax;
     this.compactMinBytes = compactMinBytes;
@@ -41,7 +44,8 @@ class BodyStore {
   }
 
   release(ref) {
-    if (ref && !Buffer.isBuffer(ref) && this.live.delete(ref)) this.liveBytes -= ref.len;
+    if (ref && !Buffer.isBuffer(ref) && this.live.delete(ref))
+      this.liveBytes -= ref.len;
   }
 
   get diskBytes() {
@@ -50,9 +54,10 @@ class BodyStore {
 
   // Rewrite live bodies into a fresh file once mostly dead space. Refs are updated in place.
   maybeCompact() {
-    if (this.offset < this.compactMinBytes || this.liveBytes * 2 > this.offset) return false;
-    const tmp = this.file + '.compact';
-    const fd = fs.openSync(tmp, 'w+');
+    if (this.offset < this.compactMinBytes || this.liveBytes * 2 > this.offset)
+      return false;
+    const tmp = this.file + ".compact";
+    const fd = fs.openSync(tmp, "w+");
     let off = 0;
     for (const ref of [...this.live].sort((a, b) => a.off - b.off)) {
       const buf = this.get(ref);
@@ -91,17 +96,29 @@ function attachBodies(flow, store) {
       enumerable: true,
       configurable: true,
       get: () => store.get(req) || Buffer.alloc(0),
-      set: (b) => { store.release(req); req = store.put(b || Buffer.alloc(0)); },
+      set: (b) => {
+        store.release(req);
+        req = store.put(b || Buffer.alloc(0));
+      },
     },
     resBody: {
       enumerable: true,
       configurable: true,
       get: () => store.get(res),
-      set: (b) => { store.release(res); res = store.put(b); },
+      set: (b) => {
+        store.release(res);
+        res = store.put(b);
+      },
     },
     reqBodyLength: { get: () => store.size(req) },
     resBodyLength: { get: () => store.size(res) },
-    releaseBodies: { value: () => { store.release(req); store.release(res); req = res = null; } },
+    releaseBodies: {
+      value: () => {
+        store.release(req);
+        store.release(res);
+        req = res = null;
+      },
+    },
   });
   return flow;
 }

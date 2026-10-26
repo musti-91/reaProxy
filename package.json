@@ -1,7 +1,7 @@
 {
   "name": "rae-proxy",
   "productName": "Rae Proxy",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Free, open HTTP/HTTPS debugging proxy for macOS — every feature unlocked.",
   "main": "src/main/main.js",
   "author": "Rae",
@@ -9,14 +9,17 @@
   "scripts": {
     "start": "electron .",
     "test": "node test/smoke.js && node test/features.js",
-    "dist": "electron-builder --mac --arm64"
+    "dist": "electron-builder --mac --arm64",
+    "prettier:write": "prettier --write \"src/**/*.{js,ts,tsx,css,scss,md,json}\"",
+    "prettier:check": "prettier --check \"src/**/*.{js,ts,tsx,css,scss,md,json}\""
   },
   "dependencies": {
     "node-forge": "^1.3.1"
   },
   "devDependencies": {
     "electron": "^44.9.0",
-    "electron-builder": "^26.0.0"
+    "electron-builder": "^26.0.0",
+    "prettier": "^3.9.10"
   },
   "build": {
     "appId": "app.rae.proxy",
