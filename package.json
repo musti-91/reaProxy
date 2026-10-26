@@ -4,7 +4,14 @@
   "version": "1.2.0",
   "description": "Free, open HTTP/HTTPS debugging proxy for macOS — every feature unlocked.",
   "main": "src/main/main.js",
-  "author": "Rae",
+  "author": {
+    "name": "musti-91"
+  },
+  "homepage": "https://github.com/musti-91/reaProxy#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/musti-91/reaProxy.git"
+  },
   "license": "MIT",
   "scripts": {
     "start": "electron .",
