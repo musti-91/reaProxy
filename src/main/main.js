@@ -20,6 +20,9 @@ const har = require("./har");
 const { AppResolver } = require("./apps");
 
 app.setName("Rae Proxy");
+if (process.platform === "darwin" && app.dock) {
+  app.dock.setIcon(path.join(__dirname, "../renderer/logo.png"));
+}
 const dataDir = app.getPath("userData");
 const config = new Config(dataDir);
 let ca;
@@ -166,6 +169,7 @@ function createWindow() {
     minWidth: 960,
     minHeight: 600,
     title: "Rae Proxy",
+    icon: path.join(__dirname, "../renderer/logo.png"),
     titleBarStyle: "hiddenInset",
     trafficLightPosition: { x: 14, y: 16 },
     backgroundColor: nativeTheme.shouldUseDarkColors ? "#1e1e20" : "#f5f5f7",

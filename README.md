@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="src/renderer/logo.png" alt="Rae Proxy logo" width="128" height="128" />
+</p>
+
 # Rae Proxy
 
 A free HTTP/HTTPS debugging proxy for macOS (Apple Silicon), inspired by Proxyman. It has no pricing, plans, trials, or locked features.

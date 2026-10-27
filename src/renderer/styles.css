@@ -119,6 +119,14 @@ code,
 .tb-title .app-name {
   font-weight: 600;
   font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.tb-title .app-logo {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
 }
 .tb-title .sub {
   color: var(--fg-dim);
