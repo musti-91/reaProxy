@@ -52,9 +52,14 @@
           ]
         }
       ],
-      "identity": "-",
-      "hardenedRuntime": false
+      "identity": "Mustafa Alroomi (JWKX6RHQWE)",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "notarize": true
     },
+    "artifactName": "RaeProxy-${version}-${arch}.${ext}",
     "directories": {
       "output": "dist"
     }

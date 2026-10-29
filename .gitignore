@@ -25,3 +25,7 @@ yarn-error.log*
 # Local root CA material, if ever copied into the project
 *.key
 rae-proxy-ca.pem
+
+# Signing material (Developer ID .p12, App Store Connect .p8)
+*.p12
+*.p8
