@@ -1,7 +1,7 @@
 {
   "name": "rae-proxy",
   "productName": "Rae Proxy",
-  "version": "1.2.1",
+  "version": "1.3.0",
   "description": "Free, open HTTP/HTTPS debugging proxy for macOS — every feature unlocked.",
   "main": "src/main/main.js",
   "author": {
@@ -52,9 +52,14 @@
           ]
         }
       ],
-      "identity": "-",
-      "hardenedRuntime": false
+      "identity": "Mustafa Alroomi (JWKX6RHQWE)",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "notarize": true
     },
+    "artifactName": "RaeProxy-${version}-${arch}.${ext}",
     "directories": {
       "output": "dist"
     }
