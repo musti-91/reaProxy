@@ -15,6 +15,19 @@ npm run prettier:check
 `npm test` runs against the proxy engine directly (no Electron window needed),
 so it's fast enough to run on every change.
 
+## Building the app
+
+`npm run dist` signs and notarizes with the maintainer's Developer ID
+certificate, so it fails without it. To build an unsigned app for local
+testing:
+
+```bash
+npx electron-builder --mac --arm64 -c.mac.identity=null -c.mac.notarize=false
+```
+
+The unsigned app runs on your own Mac, but don't distribute it. Gatekeeper
+blocks it on other machines.
+
 ## Before opening a PR
 
 - Run `npm test` and `npm run prettier:write` (or `prettier:check`) locally —

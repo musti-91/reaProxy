@@ -25,14 +25,24 @@ A free HTTP/HTTPS debugging proxy for macOS (Apple Silicon), inspired by Proxyma
 - **macOS System Proxy** toggle. It is restored when you quit, and cleaned up if the app crashed.
 - **Device setup**: on iOS or Android, open `http://rae.proxy` to download the certificate
 
+## Install
+
+```bash
+brew install --cask musti-91/tap/rae-proxy
+```
+
+Or download the DMG from [Releases](https://github.com/musti-91/reaProxy/releases). Builds are Apple Silicon only and need macOS 13 or later.
+
 ## Run
 
 ```bash
 npm install
 npm start          # dev
 npm test           # headless engine tests (test/smoke.js, test/features.js)
-npm run dist       # builds dist/Rae Proxy-1.0.0-arm64.dmg and dist/mac-arm64/Rae Proxy.app
+npm run dist       # builds dist/RaeProxy-<version>-arm64.dmg and dist/mac-arm64/Rae Proxy.app
 ```
+
+`npm run dist` signs with the maintainer's Developer ID. See [CONTRIBUTING.md](CONTRIBUTING.md#building-the-app) to build without it.
 
 The default proxy port is `9090`. The root CA is stored in `~/Library/Application Support/Rae Proxy/certificates/`.
 

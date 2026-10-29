@@ -1,7 +1,7 @@
 {
   "name": "rae-proxy",
   "productName": "Rae Proxy",
-  "version": "1.3.1",
+  "version": "1.3.2",
   "description": "Free, open HTTP/HTTPS debugging proxy for macOS — every feature unlocked.",
   "main": "src/main/main.js",
   "author": {
