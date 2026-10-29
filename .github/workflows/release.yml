@@ -71,3 +71,26 @@ jobs:
           gh release edit "$GITHUB_REF_NAME" --draft=false
         env:
           GH_TOKEN: ${{ github.token }}
+
+      # github.token can't push to another repo, so the tap needs its own
+      # token (fine-grained PAT, Contents: write on musti-91/homebrew-tap).
+      - name: Update Homebrew tap
+        run: |
+          if [ -z "$HOMEBREW_TAP_TOKEN" ]; then
+            echo "::notice::HOMEBREW_TAP_TOKEN not set, skipping tap update"
+            exit 0
+          fi
+          SHA256="$(shasum -a 256 "dist/RaeProxy-$GITHUB_REF_NAME-arm64.dmg" | cut -d' ' -f1)"
+          TAP="$RUNNER_TEMP/homebrew-tap"
+          git clone "https://x-access-token:$HOMEBREW_TAP_TOKEN@github.com/musti-91/homebrew-tap.git" "$TAP"
+          mkdir -p "$TAP/Casks"
+          sed -e "s/__VERSION__/$GITHUB_REF_NAME/" -e "s/__SHA256__/$SHA256/" \
+            build/homebrew/rae-proxy.rb > "$TAP/Casks/rae-proxy.rb"
+          cd "$TAP"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Casks/rae-proxy.rb
+          git commit -m "rae-proxy $GITHUB_REF_NAME"
+          git push
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
