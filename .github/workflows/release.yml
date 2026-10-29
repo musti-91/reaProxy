@@ -61,10 +61,13 @@ jobs:
           spctl -a -vvv -t exec "dist/mac-arm64/Rae Proxy.app"
           xcrun stapler validate "dist/mac-arm64/Rae Proxy.app"
 
+      # Immutable releases are enabled on this repo: a published release can't
+      # take new assets, so upload to a draft and publish it last.
       - name: Upload DMG to GitHub Release
         run: |
           gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
-            || gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes
+            || gh release create "$GITHUB_REF_NAME" --draft --title "$GITHUB_REF_NAME" --generate-notes
           gh release upload "$GITHUB_REF_NAME" dist/RaeProxy-*.dmg --clobber
+          gh release edit "$GITHUB_REF_NAME" --draft=false
         env:
           GH_TOKEN: ${{ github.token }}
