@@ -318,9 +318,41 @@ function newAction() {
   };
 }
 
+function describeAction(a) {
+  const phase = a.phase === "response" ? "Response" : "Request";
+  let what;
+  switch (a.type) {
+    case "header":
+      what =
+        a.op === "remove"
+          ? `Remove header ${a.name || "…"}`
+          : a.op === "add"
+            ? `Add header ${a.name || "…"}: ${a.value || ""}`
+            : `Set header ${a.name || "…"}: ${a.value || ""}`;
+      break;
+    case "status":
+      what = `Status → ${a.value || "…"}`;
+      break;
+    case "body":
+      what = `Body: ${a.regex ? "/" + (a.find || "…") + "/" : a.find || "…"} → ${a.replace || ""}`;
+      break;
+    case "url":
+      what =
+        `URL → ${[a.host, a.path, a.query].filter(Boolean).join(" ")}` || "URL";
+      break;
+    case "method":
+      what = `Method → ${a.value || "…"}`;
+      break;
+    default:
+      what = a.type;
+  }
+  return `${phase} · ${what}`;
+}
+
 function actionsField(rule, onChange) {
   if (!rule.actions) rule.actions = [];
   const list = h("div", { class: "actions-list" });
+  const collapsed = new Set();
   const commit = () => onChange("actions", rule.actions);
   const draw = () => {
     list.replaceChildren(...rule.actions.map((a, i) => actionRow(a, i)));
@@ -336,6 +368,14 @@ function actionsField(rule, onChange) {
   function actionRow(a, i) {
     if (REQUEST_ONLY_TYPES.includes(a.type)) a.phase = "request";
     if (RESPONSE_ONLY_TYPES.includes(a.type)) a.phase = "response";
+    const summaryText = h(
+      "span",
+      { class: "action-summary-text" },
+      describeAction(a),
+    );
+    const refresh = () => {
+      summaryText.textContent = describeAction(a);
+    };
     const typeSel = h(
       "select",
       {
@@ -364,6 +404,7 @@ function actionsField(rule, onChange) {
             onchange: (e) => {
               a.phase = e.target.value;
               commit();
+              refresh();
             },
           },
           [
@@ -374,6 +415,7 @@ function actionsField(rule, onChange) {
           ),
         );
     const extra = [];
+    const isBody = a.type === "body";
     if (a.type === "header") {
       extra.push(
         h(
@@ -400,6 +442,7 @@ function actionsField(rule, onChange) {
           oninput: (e) => {
             a.name = e.target.value;
             commit();
+            refresh();
           },
         }),
       );
@@ -412,6 +455,7 @@ function actionsField(rule, onChange) {
             oninput: (e) => {
               a.value = e.target.value;
               commit();
+              refresh();
             },
           }),
         );
@@ -425,41 +469,51 @@ function actionsField(rule, onChange) {
           oninput: (e) => {
             a.value = e.target.value;
             commit();
+            refresh();
           },
         }),
       );
     } else if (a.type === "body") {
       extra.push(
-        h("input", {
-          type: "text",
-          placeholder: a.regex ? "Pattern (regex)" : "Find text",
-          value: a.find || "",
-          oninput: (e) => {
-            a.find = e.target.value;
-            commit();
-          },
-        }),
-        h("input", {
-          type: "text",
-          placeholder: "Replace with",
-          value: a.replace || "",
-          oninput: (e) => {
-            a.replace = e.target.value;
-            commit();
-          },
-        }),
         h(
-          "label",
-          { class: "check", style: { marginBottom: 0 } },
-          h("input", {
-            type: "checkbox",
-            checked: !!a.regex,
-            onchange: (e) => {
-              a.regex = e.target.checked;
+          "div",
+          { class: "body-action-fields" },
+          h("label", null, a.regex ? "Pattern (regex)" : "Find text"),
+          codeArea({
+            class: "body-action-area",
+            placeholder: a.regex ? "Pattern (regex)" : "Find text",
+            value: a.find || "",
+            oninput: (e) => {
+              a.find = e.target.value;
               commit();
+              refresh();
             },
           }),
-          "Regex",
+          h("label", null, "Replace with"),
+          codeArea({
+            class: "body-action-area",
+            placeholder: "Replace with",
+            value: a.replace || "",
+            oninput: (e) => {
+              a.replace = e.target.value;
+              commit();
+              refresh();
+            },
+          }),
+          h(
+            "label",
+            { class: "check", style: { marginBottom: 0 } },
+            h("input", {
+              type: "checkbox",
+              checked: !!a.regex,
+              onchange: (e) => {
+                a.regex = e.target.checked;
+                commit();
+                refresh();
+              },
+            }),
+            "Regex",
+          ),
         ),
       );
     } else if (a.type === "url") {
@@ -471,6 +525,7 @@ function actionsField(rule, onChange) {
           oninput: (e) => {
             a.host = e.target.value;
             commit();
+            refresh();
           },
         }),
         h("input", {
@@ -480,6 +535,7 @@ function actionsField(rule, onChange) {
           oninput: (e) => {
             a.path = e.target.value;
             commit();
+            refresh();
           },
         }),
         h("input", {
@@ -489,6 +545,7 @@ function actionsField(rule, onChange) {
           oninput: (e) => {
             a.query = e.target.value;
             commit();
+            refresh();
           },
         }),
       );
@@ -500,6 +557,7 @@ function actionsField(rule, onChange) {
             onchange: (e) => {
               a.value = e.target.value;
               commit();
+              refresh();
             },
           },
           METHODS.slice(1).map((m) =>
@@ -508,26 +566,47 @@ function actionsField(rule, onChange) {
         ),
       );
     }
-    return h(
-      "div",
-      { class: "action-row" },
-      phaseSel,
-      typeSel,
-      ...extra,
-      h("span", { class: "grow" }),
+    const card = h(
+      "details",
+      { class: "action-card", open: !collapsed.has(a.id) },
       h(
-        "button",
-        {
-          class: "btn danger small",
-          onclick: () => {
-            rule.actions.splice(i, 1);
-            draw();
-            commit();
+        "summary",
+        { class: "action-summary" },
+        summaryText,
+        h(
+          "button",
+          {
+            class: "btn danger small",
+            title: "Remove this action from the rule",
+            onclick: (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              rule.actions.splice(i, 1);
+              draw();
+              commit();
+            },
           },
-        },
-        "Remove",
+          "Remove",
+        ),
+      ),
+      h(
+        "div",
+        { class: "action-card-body" },
+        h(
+          "div",
+          { class: "action-row" },
+          phaseSel,
+          typeSel,
+          ...(isBody ? [] : extra),
+        ),
+        ...(isBody ? extra : []),
       ),
     );
+    card.addEventListener("toggle", () => {
+      if (card.open) collapsed.delete(a.id);
+      else collapsed.add(a.id);
+    });
+    return card;
   }
   draw();
   return h(
@@ -539,6 +618,7 @@ function actionsField(rule, onChange) {
       "button",
       {
         class: "btn",
+        title: "Add another action to this rule",
         style: { alignSelf: "flex-start" },
         onclick: () => {
           rule.actions.push(newAction());

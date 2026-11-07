@@ -15,13 +15,88 @@ function highlightJSON(text) {
   );
 }
 
-function jsonTree(value, key, depth = 0, inArray = false) {
+// Wraps occurrences of `needle` (case-insensitive) in plain text with <mark class="hl">.
+// Returns an array of strings/Nodes suitable as h() children.
+function markMatches(text, needle) {
+  if (!needle) return [text];
+  const lower = text.toLowerCase();
+  const nlen = needle.length;
+  const out = [];
+  let i = 0,
+    idx;
+  while ((idx = lower.indexOf(needle, i)) !== -1) {
+    if (idx > i) out.push(text.slice(i, idx));
+    out.push(h("mark", { class: "hl" }, text.slice(idx, idx + nlen)));
+    i = idx + nlen;
+  }
+  if (i < text.length) out.push(text.slice(i));
+  return out.length ? out : [text];
+}
+
+// Same, but for an already-escaped HTML string (e.g. highlightJSON output) —
+// only touches text between tags so existing markup/classes are untouched.
+function highlightInHtml(html, needle) {
+  if (!needle) return html;
+  const escNeedle = esc(needle).toLowerCase();
+  if (!escNeedle) return html;
+  return html.replace(/(<[^>]+>)|([^<]+)/g, (m, tag, text) => {
+    if (tag) return tag;
+    const lower = text.toLowerCase();
+    let i = 0,
+      idx,
+      out = "";
+    while ((idx = lower.indexOf(escNeedle, i)) !== -1) {
+      out +=
+        text.slice(i, idx) +
+        '<mark class="hl">' +
+        text.slice(idx, idx + escNeedle.length) +
+        "</mark>";
+      i = idx + escNeedle.length;
+    }
+    out += text.slice(i);
+    return out;
+  });
+}
+
+// Whether `value`'s own text, or anything nested inside it, contains `needle`.
+// Memoized per search (via `cache`) so expanding a large tree stays O(n).
+function subtreeMatches(value, needle, cache) {
+  if (!needle) return false;
+  if (value === null || typeof value !== "object")
+    return String(value).toLowerCase().includes(needle);
+  if (cache && cache.has(value)) return cache.get(value);
+  const entries = Array.isArray(value)
+    ? value.map((v) => [undefined, v])
+    : Object.entries(value);
+  const result = entries.some(
+    ([k, v]) =>
+      (k !== undefined && String(k).toLowerCase().includes(needle)) ||
+      subtreeMatches(v, needle, cache),
+  );
+  if (cache) cache.set(value, result);
+  return result;
+}
+
+function jsonTree(
+  value,
+  key,
+  depth = 0,
+  inArray = false,
+  needle = "",
+  cache = null,
+) {
+  const keyText =
+    key !== undefined
+      ? inArray
+        ? String(key)
+        : JSON.stringify(String(key))
+      : null;
   const label =
     key !== undefined
       ? h(
           "span",
           { class: inArray ? "meta" : "j-key" },
-          inArray ? String(key) : JSON.stringify(String(key)),
+          ...markMatches(keyText, needle),
           ": ",
         )
       : null;
@@ -31,11 +106,17 @@ function jsonTree(value, key, depth = 0, inArray = false) {
     if (typeof value === "number") cls = "j-num";
     else if (typeof value === "boolean") cls = "j-bool";
     else if (value === null) cls = "j-null";
-    return h("div", { class: "leaf" }, label, h("span", { class: cls }, txt));
+    return h(
+      "div",
+      { class: "leaf" },
+      label,
+      h("span", { class: cls }, ...markMatches(txt, needle)),
+    );
   }
   const isArr = Array.isArray(value);
   const entries = isArr ? value.map((v, i) => [i, v]) : Object.entries(value);
-  const d = h("details", { open: depth < 2 });
+  const forceOpen = needle && subtreeMatches(value, needle, cache);
+  const d = h("details", { open: depth < 2 || forceOpen });
   d.append(
     h(
       "summary",
@@ -55,7 +136,7 @@ function jsonTree(value, key, depth = 0, inArray = false) {
     if (rendered) return;
     rendered = true;
     for (const [k, v] of entries.slice(0, 5000))
-      d.append(jsonTree(v, k, depth + 1, isArr));
+      d.append(jsonTree(v, k, depth + 1, isArr, needle, cache));
     if (entries.length > 5000)
       d.append(
         h("div", { class: "leaf meta" }, `… ${entries.length - 5000} more`),
@@ -121,9 +202,9 @@ function availableModes(bytes, ct) {
   return [...new Set(modes)];
 }
 
-function renderBody(bytes, ct, mode) {
+function renderBody(bytes, ct, mode, needle = "") {
   if (!bytes || !bytes.length)
-    return h("div", { class: "pane-empty" }, "No body");
+    return h("div", { class: "pane-empty body-empty" }, "No body");
   if (mode === "Hex") return hexDump(bytes);
   if (mode === "Preview") {
     const url = URL.createObjectURL(
@@ -141,16 +222,35 @@ function renderBody(bytes, ct, mode) {
   const text = bytesToText(bytes.length > 5e6 ? bytes.subarray(0, 5e6) : bytes);
   if (mode === "Tree" || mode === "Pretty") {
     if (/xml|html|svg/i.test(ct) && mode === "Pretty")
-      return h("pre", { class: "code" }, formatXML(text));
+      return h(
+        "pre",
+        { class: "code" },
+        ...markMatches(formatXML(text), needle),
+      );
     try {
       const v = JSON.parse(text);
-      if (mode === "Tree") return h("div", { class: "jtree" }, jsonTree(v));
+      if (mode === "Tree")
+        return h(
+          "div",
+          { class: "jtree" },
+          jsonTree(
+            v,
+            undefined,
+            0,
+            false,
+            needle,
+            needle ? new WeakMap() : null,
+          ),
+        );
       return h("pre", {
         class: "code",
-        html: highlightJSON(JSON.stringify(v, null, 2)),
+        html: highlightInHtml(
+          highlightJSON(JSON.stringify(v, null, 2)),
+          needle,
+        ),
       });
     } catch {
-      return h("pre", { class: "code" }, text);
+      return h("pre", { class: "code" }, ...markMatches(text, needle));
     }
   }
   if (mode === "Form") {
@@ -160,8 +260,95 @@ function renderBody(bytes, ct, mode) {
   return h(
     "pre",
     { class: "code" },
-    text +
-      (bytes.length > 5e6 ? `\n\n… truncated (${fmtBytes(bytes.length)})` : ""),
+    ...markMatches(text, needle),
+    bytes.length > 5e6 ? `\n\n… truncated (${fmtBytes(bytes.length)})` : "",
+  );
+}
+
+// Search bar + rendered body for the Body tab. Highlights matches and lets
+// the user step through them without losing focus of the search input.
+function searchableBody(side, bytes, ct, mode) {
+  if (!bytes || !bytes.length) return renderBody(bytes, ct, mode);
+  const needle = (S.bodySearch[side] || "").trim().toLowerCase();
+  const content = renderBody(bytes, ct, mode, needle);
+  const bar = bodySearchBar(side, content, needle);
+  return h("div", { class: "body-search-wrap" }, bar, content);
+}
+
+function bodySearchBar(side, contentEl, needle) {
+  const marks = needle ? [...contentEl.querySelectorAll("mark.hl")] : [];
+  const cur = marks.length
+    ? (((S.bodySearchIdx[side] || 0) % marks.length) + marks.length) %
+      marks.length
+    : 0;
+  S.bodySearchIdx[side] = cur;
+  if (marks.length) {
+    marks[cur].classList.add("cur");
+    requestAnimationFrame(() =>
+      marks[cur]?.scrollIntoView({ block: "center" }),
+    );
+  }
+  const nav = (delta) => {
+    if (!marks.length) return;
+    S.bodySearchIdx[side] = cur + delta;
+    S.bodySearchFocus = side;
+    renderDetail();
+  };
+  const input = h("input", {
+    type: "text",
+    class: "body-search-input",
+    placeholder: "Find in body…",
+    title:
+      "Find text in the body below — Enter for next, Shift+Enter for previous",
+    value: S.bodySearch[side] || "",
+    oninput: (e) => {
+      S.bodySearch[side] = e.target.value;
+      S.bodySearchIdx[side] = 0;
+      S.bodySearchFocus = side;
+      renderDetail();
+    },
+    onkeydown: (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        nav(e.shiftKey ? -1 : 1);
+      } else if (e.key === "Escape") {
+        S.bodySearch[side] = "";
+        renderDetail();
+      }
+    },
+  });
+  return h(
+    "div",
+    { class: "body-search-bar" },
+    h("span", { class: "body-search-icon" }, "🔎"),
+    input,
+    needle
+      ? h(
+          "span",
+          { class: "body-search-count" },
+          marks.length ? `${cur + 1} / ${marks.length}` : "No matches",
+        )
+      : null,
+    h(
+      "button",
+      {
+        class: "btn small",
+        title: "Jump to the previous match",
+        disabled: !marks.length,
+        onclick: () => nav(-1),
+      },
+      "‹",
+    ),
+    h(
+      "button",
+      {
+        class: "btn small",
+        title: "Jump to the next match",
+        disabled: !marks.length,
+        onclick: () => nav(1),
+      },
+      "›",
+    ),
   );
 }
 
