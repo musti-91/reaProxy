@@ -16,6 +16,9 @@ const S = {
   sort: { col: "id", asc: true },
   tabs: { req: "Header", res: "Body" },
   modes: { req: null, res: null },
+  bodySearch: { req: "", res: "" },
+  bodySearchIdx: { req: 0, res: 0 },
+  bodySearchFocus: null,
   sideSearch: "",
   appIcons: {},
 };
@@ -707,7 +710,27 @@ async function loadDetail() {
 }
 const reloadDetail = debounce(loadDetail, 150);
 
-function paneHead(title, side, tabs, modes) {
+function copyLabelFor(side, tab, binary) {
+  const subject = side === "req" ? "request" : "response";
+  switch (tab) {
+    case "Header":
+      return `Copy ${subject} headers`;
+    case "Query":
+      return "Copy query parameters";
+    case "Body":
+      return binary ? `Copy ${subject} body (base64)` : `Copy ${subject} body`;
+    case "Cookies":
+      return "Copy cookies";
+    case "Set-Cookie":
+      return "Copy Set-Cookie headers";
+    case "Raw":
+      return `Copy raw ${subject}`;
+    default:
+      return "Copy";
+  }
+}
+
+function paneHead(title, side, tabs, modes, copy) {
   const head = h(
     "div",
     { class: "pane-head" },
@@ -730,9 +753,10 @@ function paneHead(title, side, tabs, modes) {
       ),
     );
   }
+  const right = h("div", { class: "pane-head-right" });
   if (modes && modes.length) {
     const cur = modes.includes(S.modes[side]) ? S.modes[side] : modes[0];
-    head.append(
+    right.append(
       h(
         "div",
         { class: "viewmodes" },
@@ -752,6 +776,23 @@ function paneHead(title, side, tabs, modes) {
       ),
     );
   }
+  if (copy && copy.text) {
+    right.append(
+      h(
+        "button",
+        {
+          class: "btn small icon pane-copy",
+          title: copy.label,
+          onclick: () => {
+            rae.invoke("clipboard:write", copy.text);
+            toast("Copied");
+          },
+        },
+        "⧉",
+      ),
+    );
+  }
+  head.append(right);
   return head;
 }
 
@@ -797,8 +838,30 @@ function renderDetail() {
         null,
         h(
           "div",
-          { class: "kv-section" },
-          `${d.method} ${u ? (d.tunnel ? u.host : u.pathname + u.search) : d.url} HTTP/${d.httpVersion}`,
+          { class: "req-line" },
+          h(
+            "span",
+            { class: "req-line-text" },
+            h("span", { class: "req-method" }, d.method),
+            " ",
+            h(
+              "span",
+              { class: "req-path" },
+              u ? (d.tunnel ? u.host : u.pathname + u.search) : d.url,
+            ),
+          ),
+          h(
+            "button",
+            {
+              class: "btn small icon url-copy",
+              title: "Copy the full request URL",
+              onclick: () => {
+                rae.invoke("clipboard:write", d.url);
+                toast("URL copied");
+              },
+            },
+            "⧉",
+          ),
         ),
         kvTable(d.reqHeaders, "No headers"),
       );
@@ -807,7 +870,8 @@ function renderDetail() {
       reqBody = kvTable(query, "No query parameters");
       break;
     case "Body":
-      reqBody = renderBody(
+      reqBody = searchableBody(
+        "req",
         reqBytes,
         d.reqContentType,
         reqModes.includes(S.modes.req) ? S.modes.req : reqModes[0],
@@ -823,8 +887,39 @@ function renderDetail() {
       reqBody = summaryView(d);
       break;
   }
+  const reqCopyText = (() => {
+    switch (S.tabs.req) {
+      case "Header":
+        return `${d.method} ${u ? (d.tunnel ? u.host : u.pathname + u.search) : d.url} HTTP/${d.httpVersion}\n${headersToText(d.reqHeaders)}`;
+      case "Query":
+        return query.length
+          ? query.map(([k, v]) => `${k}=${v}`).join("\n")
+          : "";
+      case "Body":
+        return reqBytes.length
+          ? looksBinary(reqBytes)
+            ? d.reqBody
+            : bytesToText(reqBytes)
+          : "";
+      case "Cookies":
+        return cookies.length
+          ? cookies.map(([k, v]) => `${k}=${v}`).join("\n")
+          : "";
+      case "Raw":
+        return rawRequestText(d);
+      default:
+        return "";
+    }
+  })();
   req.replaceChildren(
-    paneHead("Request", "req", reqTabs, reqModes),
+    paneHead("Request", "req", reqTabs, reqModes, {
+      text: reqCopyText,
+      label: copyLabelFor(
+        "req",
+        S.tabs.req,
+        reqBytes.length && looksBinary(reqBytes),
+      ),
+    }),
     h("div", { class: "pane-body" }, reqBody),
   );
 
@@ -901,7 +996,8 @@ function renderDetail() {
                 ),
               ),
             )
-          : renderBody(
+          : searchableBody(
+              "res",
               resBytes,
               d.contentType,
               resModes && resModes.length
@@ -922,10 +1018,54 @@ function renderDetail() {
         break;
     }
   }
+  const resCopyText = (() => {
+    switch (S.tabs.res) {
+      case "Header":
+        return d.status
+          ? `HTTP/${d.httpVersion} ${d.status} ${d.statusMessage || ""}\n${headersToText(d.resHeaders)}`
+          : "";
+      case "Body":
+        return !d.tunnel && resBytes && resBytes.length
+          ? looksBinary(resBytes)
+            ? d.resBody
+            : bytesToText(resBytes)
+          : "";
+      case "Set-Cookie":
+        return setCookies
+          ? (d.resHeaders || [])
+              .filter(([k]) => k.toLowerCase() === "set-cookie")
+              .map(([, v]) => v)
+              .join("\n")
+          : "";
+      case "Raw":
+        return rawResponseText(d);
+      default:
+        return "";
+    }
+  })();
   res.replaceChildren(
-    paneHead("Response", "res", resTabs, resModes),
+    paneHead("Response", "res", resTabs, resModes, {
+      text: resCopyText,
+      label: copyLabelFor(
+        "res",
+        S.tabs.res,
+        resBytes && resBytes.length && looksBinary(resBytes),
+      ),
+    }),
     h("div", { class: "pane-body" }, resBody),
   );
+  for (const side of ["req", "res"]) {
+    if (S.bodySearchFocus === side) {
+      const el = (side === "req" ? req : res).querySelector(
+        ".body-search-input",
+      );
+      if (el) {
+        el.focus();
+        const v = el.value;
+        el.setSelectionRange(v.length, v.length);
+      }
+    }
+  }
 }
 
 function summaryView(d) {

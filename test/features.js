@@ -5,6 +5,7 @@ const https = require('https');
 const http2 = require('http2');
 const net = require('net');
 const tls = require('tls');
+const zlib = require('zlib');
 const os = require('os');
 const fs = require('fs');
 const path = require('path');
@@ -47,7 +48,14 @@ const h2Server = http2.createSecureServer({ SNICallback: sni, allowHTTP1: false 
   }
   echoJSON(req, res);
 });
-const h1Server = https.createServer({ SNICallback: sni }, (req, res) => echoJSON(req, res));
+const h1Server = https.createServer({ SNICallback: sni }, (req, res) => {
+  if (req.url === '/gzip-body') {
+    const gz = zlib.gzipSync(Buffer.from(JSON.stringify({ secret: 'ORIGINAL' })));
+    res.writeHead(200, { 'content-type': 'application/json', 'content-encoding': 'gzip' });
+    return res.end(gz);
+  }
+  echoJSON(req, res);
+});
 const h2cServer = http2.createServer((req, res) => echoJSON(req, res));
 
 // Upstream proxy requiring Basic auth u:p. Every target host is mapped to 127.0.0.1.
@@ -320,6 +328,31 @@ const listen = (srv) => new Promise((r) => srv.listen(0, '127.0.0.1', () => r(sr
     const f = lastFlow((x) => x.url.endsWith('/rewrite-test'));
     assert.ok(f.reqHeaders.some(([k, v]) => k === 'X-Debug' && v === '1'), 'request header injected');
     assert.ok(f.tags.includes('rewrite'));
+    config.set({ rewrite: { enabled: true, rules: [] } });
+  });
+
+  await check('Rewrite: Body Text action rewrites a gzip-encoded response and a request body', async () => {
+    config.set({
+      rewrite: {
+        enabled: true,
+        rules: [
+          {
+            id: 'rw2', enabled: true, name: 'res-body', pattern: '*/gzip-body', matchType: 'wildcard', method: 'ANY',
+            actions: [{ id: 'b1', phase: 'response', type: 'body', op: 'set', find: 'ORIGINAL', replace: 'REWRITTEN', regex: false }],
+          },
+          {
+            id: 'rw3', enabled: true, name: 'req-body', pattern: '*/body-rewrite-req', matchType: 'wildcard', method: 'ANY',
+            actions: [{ id: 'b2', phase: 'request', type: 'body', op: 'set', find: 'FOO', replace: 'BAR', regex: false }],
+          },
+        ],
+      },
+    });
+    const r1 = await h1ViaProxy(`https://localhost:${h1p}/gzip-body`);
+    assert.ok(r1.body.includes('REWRITTEN'), 'gzip response body rewritten');
+    assert.ok(!r1.body.includes('ORIGINAL'), 'original gzip body text gone');
+
+    const r2 = await h1ViaProxy(`https://localhost:${h1p}/body-rewrite-req`, { method: 'POST', body: 'FOO-payload' });
+    assert.ok(JSON.parse(r2.body).body === 'BAR-payload', 'request body rewritten');
     config.set({ rewrite: { enabled: true, rules: [] } });
   });
 
